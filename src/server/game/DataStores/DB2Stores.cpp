@@ -188,6 +188,7 @@ DB2Storage<LockEntry>                           sLockStore("Lock.db2", LockLoadI
 DB2Storage<MailTemplateEntry>                   sMailTemplateStore("MailTemplate.db2", MailTemplateLoadInfo::Instance());
 DB2Storage<MapEntry>                            sMapStore("Map.db2", MapLoadInfo::Instance());
 DB2Storage<MapDifficultyEntry>                  sMapDifficultyStore("MapDifficulty.db2", MapDifficultyLoadInfo::Instance());
+DB2Storage<MapDifficultyXConditionEntry>        sMapDifficultyXConditionStore("MapDifficultyXCondition.db2", MapDifficultyXConditionLoadInfo::Instance());
 DB2Storage<ModifierTreeEntry>                   sModifierTreeStore("ModifierTree.db2", ModifierTreeLoadInfo::Instance());
 DB2Storage<MountCapabilityEntry>                sMountCapabilityStore("MountCapability.db2", MountCapabilityLoadInfo::Instance());
 DB2Storage<MountEntry>                          sMountStore("Mount.db2", MountLoadInfo::Instance());
@@ -407,6 +408,7 @@ namespace
     ItemSetSpellContainer _itemSetSpells;
     ItemSpecOverridesContainer _itemSpecOverrides;
     DB2Manager::MapDifficultyContainer _mapDifficulties;
+    std::unordered_map<uint32, DB2Manager::MapDifficultyConditionsContainer> _mapDifficultyConditions;
     std::unordered_map<uint32, MountEntry const*> _mountsBySpellId;
     MountCapabilitiesByTypeContainer _mountCapabilitiesByType;
     MountDisplaysCointainer _mountDisplays;
@@ -708,6 +710,7 @@ uint32 DB2Manager::LoadStores(std::string const& dataPath, LocaleConstant defaul
     LOAD_DB2(sMailTemplateStore);
     LOAD_DB2(sMapStore);
     LOAD_DB2(sMapDifficultyStore);
+    LOAD_DB2(sMapDifficultyXConditionStore);
     LOAD_DB2(sModifierTreeStore);
     LOAD_DB2(sMountCapabilityStore);
     LOAD_DB2(sMountStore);
@@ -1074,6 +1077,20 @@ uint32 DB2Manager::LoadStores(std::string const& dataPath, LocaleConstant defaul
     for (MapDifficultyEntry const* entry : sMapDifficultyStore)
         _mapDifficulties[entry->MapID][entry->DifficultyID] = entry;
     _mapDifficulties[0][0] = _mapDifficulties[1][0]; // map 0 is missing from MapDifficulty.dbc so we cheat a bit
+
+    std::vector<MapDifficultyXConditionEntry const*> mapDifficultyConditions;
+    mapDifficultyConditions.reserve(sMapDifficultyXConditionStore.GetNumRows());
+    for (MapDifficultyXConditionEntry const* mapDifficultyCondition : sMapDifficultyXConditionStore)
+        mapDifficultyConditions.push_back(mapDifficultyCondition);
+
+    std::sort(mapDifficultyConditions.begin(), mapDifficultyConditions.end(), [](MapDifficultyXConditionEntry const* left, MapDifficultyXConditionEntry const* right)
+    {
+        return left->OrderIndex < right->OrderIndex;
+    });
+
+    for (MapDifficultyXConditionEntry const* mapDifficultyCondition : mapDifficultyConditions)
+        if (PlayerConditionEntry const* playerCondition = sPlayerConditionStore.LookupEntry(mapDifficultyCondition->PlayerConditionID))
+            _mapDifficultyConditions[mapDifficultyCondition->MapDifficultyID].emplace_back(mapDifficultyCondition->ID, playerCondition);
 
     for (MountEntry const* mount : sMountStore)
         _mountsBySpellId[mount->SourceSpellID] = mount;
@@ -1561,20 +1578,12 @@ std::vector<ArtifactPowerEntry const*> DB2Manager::GetArtifactPowers(uint8 artif
 
 std::unordered_set<uint32> const* DB2Manager::GetArtifactPowerLinks(uint32 artifactPowerId) const
 {
-    auto itr = _artifactPowerLinks.find(artifactPowerId);
-    if (itr != _artifactPowerLinks.end())
-        return &itr->second;
-
-    return nullptr;
+    return Trinity::Containers::MapGetValuePtr(_artifactPowerLinks, artifactPowerId);
 }
 
 ArtifactPowerRankEntry const* DB2Manager::GetArtifactPowerRank(uint32 artifactPowerId, uint8 rank) const
 {
-    auto itr = _artifactPowerRanks.find({ artifactPowerId, rank });
-    if (itr != _artifactPowerRanks.end())
-        return itr->second;
-
-    return nullptr;
+    return Trinity::Containers::MapGetValuePtr(_artifactPowerRanks, { artifactPowerId, rank });
 }
 
 AzeriteEmpoweredItemEntry const* DB2Manager::GetAzeriteEmpoweredItem(uint32 itemId) const
@@ -1884,13 +1893,11 @@ float DB2Manager::GetCurveValueAt(uint32 curveId, float x) const
 
 EmotesTextSoundEntry const* DB2Manager::GetTextSoundEmoteFor(uint32 emote, uint8 race, uint8 gender, uint8 class_) const
 {
-    auto itr = _emoteTextSounds.find(EmotesTextSoundContainer::key_type(emote, race, gender, class_));
-    if (itr != _emoteTextSounds.end())
-        return itr->second;
+    if (EmotesTextSoundEntry const* emotesTextSound = Trinity::Containers::MapGetValuePtr(_emoteTextSounds, { emote, race, gender, class_ }))
+        return emotesTextSound;
 
-    itr = _emoteTextSounds.find(EmotesTextSoundContainer::key_type(emote, race, gender, uint8(0)));
-    if (itr != _emoteTextSounds.end())
-        return itr->second;
+    if (EmotesTextSoundEntry const* emotesTextSound = Trinity::Containers::MapGetValuePtr(_emoteTextSounds, { emote, race, gender, uint8(0) }))
+        return emotesTextSound;
 
     return nullptr;
 }
@@ -2010,47 +2017,27 @@ float DB2Manager::EvaluateExpectedStat(ExpectedStatType stat, uint32 level, int3
 
 std::vector<uint32> const* DB2Manager::GetFactionTeamList(uint32 faction) const
 {
-    auto itr = _factionTeams.find(faction);
-    if (itr != _factionTeams.end())
-        return &itr->second;
-
-    return nullptr;
+    return Trinity::Containers::MapGetValuePtr(_factionTeams, faction);
 }
 
 HeirloomEntry const* DB2Manager::GetHeirloomByItemId(uint32 itemId) const
 {
-    auto itr = _heirlooms.find(itemId);
-    if (itr != _heirlooms.end())
-        return itr->second;
-
-    return nullptr;
+    return Trinity::Containers::MapGetValuePtr(_heirlooms, itemId);
 }
 
 std::vector<uint32> const* DB2Manager::GetGlyphBindableSpells(uint32 glyphPropertiesId) const
 {
-    auto itr = _glyphBindableSpells.find(glyphPropertiesId);
-    if (itr != _glyphBindableSpells.end())
-        return &itr->second;
-
-    return nullptr;
+    return Trinity::Containers::MapGetValuePtr(_glyphBindableSpells, glyphPropertiesId);
 }
 
 std::vector<uint32> const* DB2Manager::GetGlyphRequiredSpecs(uint32 glyphPropertiesId) const
 {
-    auto itr = _glyphRequiredSpecs.find(glyphPropertiesId);
-    if (itr != _glyphRequiredSpecs.end())
-        return &itr->second;
-
-    return nullptr;
+    return Trinity::Containers::MapGetValuePtr(_glyphRequiredSpecs, glyphPropertiesId);
 }
 
 DB2Manager::ItemBonusList const* DB2Manager::GetItemBonusList(uint32 bonusListId) const
 {
-    auto itr = _itemBonusLists.find(bonusListId);
-    if (itr != _itemBonusLists.end())
-        return &itr->second;
-
-    return nullptr;
+    return Trinity::Containers::MapGetValuePtr(_itemBonusLists, bonusListId);
 }
 
 uint32 DB2Manager::GetItemBonusListForItemLevelDelta(int16 delta) const
@@ -2204,11 +2191,7 @@ void LoadAzeriteEmpoweredItemUnlockMappings(std::unordered_map<int32, std::vecto
 
 ItemChildEquipmentEntry const* DB2Manager::GetItemChildEquipment(uint32 itemId) const
 {
-    auto itr = _itemChildEquipment.find(itemId);
-    if (itr != _itemChildEquipment.end())
-        return itr->second;
-
-    return nullptr;
+    return Trinity::Containers::MapGetValuePtr(_itemChildEquipment, itemId);
 }
 
 ItemClassEntry const* DB2Manager::GetItemClassByOldEnum(uint32 itemClass) const
@@ -2223,11 +2206,7 @@ bool DB2Manager::HasItemCurrencyCost(uint32 itemId) const
 
 std::vector<ItemLimitCategoryConditionEntry const*> const* DB2Manager::GetItemLimitCategoryConditions(uint32 categoryId) const
 {
-    auto itr = _itemCategoryConditions.find(categoryId);
-    if (itr != _itemCategoryConditions.end())
-        return &itr->second;
-
-    return nullptr;
+    return Trinity::Containers::MapGetValuePtr(_itemCategoryConditions, categoryId);
 }
 
 uint32 DB2Manager::GetItemDisplayId(uint32 itemId, uint32 appearanceModId) const
@@ -2258,29 +2237,17 @@ ItemModifiedAppearanceEntry const* DB2Manager::GetItemModifiedAppearance(uint32 
 
 ItemModifiedAppearanceEntry const* DB2Manager::GetDefaultItemModifiedAppearance(uint32 itemId) const
 {
-    auto itr = _itemModifiedAppearancesByItem.find(itemId);
-    if (itr != _itemModifiedAppearancesByItem.end())
-        return itr->second;
-
-    return nullptr;
+    return Trinity::Containers::MapGetValuePtr(_itemModifiedAppearancesByItem, itemId);
 }
 
 std::vector<ItemSetSpellEntry const*> const* DB2Manager::GetItemSetSpells(uint32 itemSetId) const
 {
-    auto itr = _itemSetSpells.find(itemSetId);
-    if (itr != _itemSetSpells.end())
-        return &itr->second;
-
-    return nullptr;
+    return Trinity::Containers::MapGetValuePtr(_itemSetSpells, itemSetId);
 }
 
 std::vector<ItemSpecOverrideEntry const*> const* DB2Manager::GetItemSpecOverrides(uint32 itemId) const
 {
-    auto itr = _itemSpecOverrides.find(itemId);
-    if (itr != _itemSpecOverrides.end())
-        return &itr->second;
-
-    return nullptr;
+    return Trinity::Containers::MapGetValuePtr(_itemSpecOverrides, itemId);
 }
 
 LFGDungeonsEntry const* DB2Manager::GetLfgDungeon(uint32 mapId, Difficulty difficulty)
@@ -2386,13 +2353,14 @@ MapDifficultyEntry const* DB2Manager::GetDownscaledMapDifficultyData(uint32 mapI
     return mapDiff;
 }
 
+DB2Manager::MapDifficultyConditionsContainer const* DB2Manager::GetMapDifficultyConditions(uint32 mapDifficultyId) const
+{
+    return Trinity::Containers::MapGetValuePtr(_mapDifficultyConditions, mapDifficultyId);
+}
+
 MountEntry const* DB2Manager::GetMount(uint32 spellId) const
 {
-    auto itr = _mountsBySpellId.find(spellId);
-    if (itr != _mountsBySpellId.end())
-        return itr->second;
-
-    return nullptr;
+    return Trinity::Containers::MapGetValuePtr(_mountsBySpellId, spellId);
 }
 
 MountEntry const* DB2Manager::GetMountById(uint32 id) const
@@ -2402,11 +2370,7 @@ MountEntry const* DB2Manager::GetMountById(uint32 id) const
 
 DB2Manager::MountTypeXCapabilitySet const* DB2Manager::GetMountCapabilities(uint32 mountType) const
 {
-    auto itr = _mountCapabilitiesByType.find(mountType);
-    if (itr != _mountCapabilitiesByType.end())
-        return &itr->second;
-
-    return nullptr;
+    return Trinity::Containers::MapGetValuePtr(_mountCapabilitiesByType, mountType);
 }
 
 DB2Manager::MountXDisplayContainer const* DB2Manager::GetMountDisplays(uint32 mountId) const
@@ -2552,11 +2516,7 @@ uint32 DB2Manager::GetQuestUniqueBitFlag(uint32 questId)
 
 std::vector<uint32> const* DB2Manager::GetPhasesForGroup(uint32 group) const
 {
-    auto itr = _phasesByGroup.find(group);
-    if (itr != _phasesByGroup.end())
-        return &itr->second;
-
-    return nullptr;
+    return Trinity::Containers::MapGetValuePtr(_phasesByGroup, group);
 }
 
 PowerTypeEntry const* DB2Manager::GetPowerTypeEntry(Powers power) const
@@ -2593,20 +2553,12 @@ uint8 DB2Manager::GetPvpItemLevelBonus(uint32 itemId) const
 
 std::vector<RewardPackXCurrencyTypeEntry const*> const* DB2Manager::GetRewardPackCurrencyTypesByRewardID(uint32 rewardPackID) const
 {
-    auto itr = _rewardPackCurrencyTypes.find(rewardPackID);
-    if (itr != _rewardPackCurrencyTypes.end())
-        return &itr->second;
-
-    return nullptr;
+    return Trinity::Containers::MapGetValuePtr(_rewardPackCurrencyTypes, rewardPackID);
 }
 
 std::vector<RewardPackXItemEntry const*> const* DB2Manager::GetRewardPackItemsByRewardID(uint32 rewardPackID) const
 {
-    auto itr = _rewardPackItems.find(rewardPackID);
-    if (itr != _rewardPackItems.end())
-        return &itr->second;
-
-    return nullptr;
+    return Trinity::Containers::MapGetValuePtr(_rewardPackItems, rewardPackID);
 }
 
 std::vector<SkillLineEntry const*> const* DB2Manager::GetSkillLinesForParentSkill(uint32 parentSkillId) const
@@ -2637,11 +2589,7 @@ SkillRaceClassInfoEntry const* DB2Manager::GetSkillRaceClassInfo(uint32 skill, u
 
 std::vector<SpecializationSpellsEntry const*> const* DB2Manager::GetSpecializationSpells(uint32 specId) const
 {
-    auto itr = _specializationSpellsBySpec.find(specId);
-    if (itr != _specializationSpellsBySpec.end())
-        return &itr->second;
-
-    return nullptr;
+    return Trinity::Containers::MapGetValuePtr(_specializationSpellsBySpec, specId);
 }
 
 bool DB2Manager::IsSpecSetMember(int32 specSetId, uint32 specId) const
@@ -2995,7 +2943,7 @@ bool DB2Manager::GetUiMapPosition(float x, float y, float z, int32 mapId, int32 
 
     DBCPosition2D uiPosition
     {
-        // x any y are swapped
+        // x and y are swapped
         ((1.0f - (1.0f - relativePosition.Y)) * uiMapAssignment->UiMin.X) + ((1.0f - relativePosition.Y) * uiMapAssignment->UiMax.X),
         ((1.0f - (1.0f - relativePosition.X)) * uiMapAssignment->UiMin.Y) + ((1.0f - relativePosition.X) * uiMapAssignment->UiMax.Y)
     };
@@ -3020,10 +2968,11 @@ void DB2Manager::Zone2MapCoordinates(uint32 areaId, float& x, float& y) const
         if (assignment.second->MapID >= 0 && assignment.second->MapID != areaEntry->ContinentID)
             continue;
 
-        float tmpY = 1.0 - ((y - assignment.second->UiMin.Y) / (assignment.second->UiMax.Y - assignment.second->UiMin.Y));
-        float tmpX = 1.0 - ((x - assignment.second->UiMin.X) / (assignment.second->UiMax.X - assignment.second->UiMin.X));
-        y = ((1.0 - tmpY) * assignment.second->Region[0].X) + (tmpY * assignment.second->Region[1].X);
-        x = ((1.0 - tmpX) * assignment.second->Region[0].Y) + (tmpX * assignment.second->Region[1].Y);
+        float tmpY = (y - assignment.second->UiMax.Y) / (assignment.second->UiMin.Y - assignment.second->UiMax.Y);
+        float tmpX = (x - assignment.second->UiMax.X) / (assignment.second->UiMin.X - assignment.second->UiMax.X);
+        x = assignment.second->Region[0].X + tmpY * (assignment.second->Region[1].X - assignment.second->Region[0].X);
+        y = assignment.second->Region[0].Y + tmpX * (assignment.second->Region[1].Y - assignment.second->Region[0].Y);
+
         break;
     }
 }

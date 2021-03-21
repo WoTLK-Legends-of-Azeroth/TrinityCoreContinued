@@ -1778,7 +1778,7 @@ void QuestLog::WriteCreate(ByteBuffer& data, Player const* owner, Player const* 
     data << uint32(StateFlags);
     data << uint32(EndTime);
     data << uint32(AcceptTime);
-    data << uint32(Field_10);
+    data << uint32(ObjectiveFlags);
     for (std::size_t i = 0; i < 24; ++i)
     {
         data << int16(ObjectiveProgress[i]);
@@ -1816,7 +1816,7 @@ void QuestLog::WriteUpdate(ByteBuffer& data, bool ignoreChangesMask, Player cons
         }
         if (changesMask[5])
         {
-            data << uint32(Field_10);
+            data << uint32(ObjectiveFlags);
         }
     }
     if (changesMask[6])
@@ -1837,7 +1837,7 @@ void QuestLog::ClearChangesMask()
     Base::ClearChangesMask(StateFlags);
     Base::ClearChangesMask(EndTime);
     Base::ClearChangesMask(AcceptTime);
-    Base::ClearChangesMask(Field_10);
+    Base::ClearChangesMask(ObjectiveFlags);
     Base::ClearChangesMask(ObjectiveProgress);
     _changesMask.ResetAll();
 }
