@@ -2467,9 +2467,6 @@ void Spell::EffectEnchantItemTmp(SpellEffIndex effIndex)
     if (!player)
         return;
 
-    if (!itemTarget)
-        return;
-
     uint32 enchant_id = effectInfo->MiscValue;
 
     if (!enchant_id)
