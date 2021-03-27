@@ -136,6 +136,7 @@ public:
                 }
                 if (newZoneID != BLASTER_LANDS_ZONE_ID && player->GetMapId() == MAP_BLASTED_LANDS_PHASE)
                 {
+                    player->HasAura(SPELL_TIME_TRAVELLING);
                     player->SeamlessTeleportToMap(MAP_EASTERN_KINGDOMS);
                 }
             }
@@ -234,9 +235,13 @@ public:
             {
                 CloseGossipMenuFor(player);
 	    
+                player->AddMovieDelayedAction(DARK_PORTAL_DRAENOR_MOVE, [player]
+                {
+                    player->TeleportTo(1265, 4066.7370f, -2381.9917f, 94.858f, 2.90f);
+                });
+
                 player->SendMovieStart(DARK_PORTAL_DRAENOR_MOVE);
                 player->KilledMonsterCredit(NPC_SPEAK_WITH_KHADGAR_CREDIT);
-                player->TeleportTo(1265, 4066.7370f, -2381.9917f, 94.858f, 2.90f);
             }
 	    
             return true;

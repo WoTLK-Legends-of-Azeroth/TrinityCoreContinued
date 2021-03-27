@@ -2430,6 +2430,12 @@ class TC_GAME_API Player : public Unit, public GridObject<Player>
                 .ModifyValue(&UF::RestInfo::Threshold), threshold);
         }
 
+        std::vector<std::pair<uint32, std::function<void()>>> MovieDelayedActions;
+        void AddMovieDelayedAction(uint32 movieId, std::function<void()> && function)
+        {
+            MovieDelayedActions.push_back(std::pair<uint32, std::function<void()>>(movieId, function));
+        }
+
         void SendPlayerChoice(ObjectGuid sender, int32 choiceId);
 
         bool MeetPlayerCondition(uint32 conditionId) const;

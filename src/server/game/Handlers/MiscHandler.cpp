@@ -727,6 +727,18 @@ void WorldSession::HandleCompleteMovie(WorldPackets::Misc::CompleteMovie& /*pack
     if (!movie)
         return;
 
+    auto itr = std::find_if(_player->MovieDelayedActions.begin(), _player->MovieDelayedActions.end(), [movie](const std::pair<uint32, std::function<void()>>& elem) -> bool
+    {
+        return elem.first == movie;
+    });
+
+    if (itr != _player->MovieDelayedActions.end())
+    {
+        (*itr).second();
+        (*itr).second = nullptr;
+        _player->MovieDelayedActions.erase(itr);
+    }
+
     _player->SetMovie(0);
     sScriptMgr->OnMovieComplete(_player, movie);
 }
