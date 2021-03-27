@@ -24,6 +24,7 @@ Quest support: 3628.
 #include "ScriptedCreature.h"
 #include "ScriptedGossip.h"
 #include "SpellScript.h"
+#include "ObjectMgr.h"
 #include "Player.h"
 #include "Group.h"
 
@@ -81,12 +82,18 @@ class spell_razelikh_teleport_group : public SpellScriptLoader
 
 enum BlastedLandsMisc
 {
-    BLASTER_LANDS_ZONE_ID   = 4,
+    BLASTER_LANDS_ZONE_ID         = 4,
 
-    MAP_BLASTED_LANDS_PHASE = 1190,
-    MAP_EASTERN_KINGDOMS    = 0,
+    MAP_BLASTED_LANDS_PHASE       = 1190,
+    MAP_EASTERN_KINGDOMS          = 0,
 
-    SPELL_TIME_TRAVELLING   = 176111
+    QUEST_THE_DARK_PORTAL         = 34398,
+
+    NPC_SPEAK_WITH_KHADGAR_CREDIT = 78419,
+
+    DARK_PORTAL_DRAENOR_MOVE      = 199,
+
+    SPELL_TIME_TRAVELLING         = 176111
 };
 
 class DarkPortal_Phasing: public PlayerScript
@@ -94,6 +101,26 @@ class DarkPortal_Phasing: public PlayerScript
 public:
     DarkPortal_Phasing() : PlayerScript("DarkPortal_Phasing") { }
 
+    void OnLogin(Player* player, bool /*firstLogin*/) override
+    {
+        if (player->getLevel() >= 90)
+            HandleDraenorStart(player);
+    }
+
+    void OnLevelChanged(Player* player, uint8 oldLevel) override
+    {
+        if (oldLevel < 90 && player->getLevel() >= 90)
+            HandleDraenorStart(player);
+    }
+
+    void HandleDraenorStart(Player* player)
+    {
+        Quest const* quest = sObjectMgr->GetQuestTemplate(QUEST_THE_DARK_PORTAL);
+
+        if (player->GetQuestStatus(QUEST_THE_DARK_PORTAL) == QUEST_STATUS_NONE)
+            player->AddQuest(quest, nullptr);
+    }
+	
     void OnUpdateZone(Player* player, uint32 newZoneID, uint32 oldZoneID, uint32 /*newAreaID*/) override
     {
         if (player->IsInFlight())
@@ -116,8 +143,116 @@ public:
     }
 };
 
+class npc_zidormi_blasted_lands : public CreatureScript
+{
+public:
+    npc_zidormi_blasted_lands() : CreatureScript("npc_zidormi_blasted_lands") { }
+
+    struct npc_zidormi_blasted_landsAI : public ScriptedAI
+    {
+        npc_zidormi_blasted_landsAI(Creature* creature) : ScriptedAI(creature) { }
+
+        bool GossipHello(Player* player) override
+        {
+            if (player->getLevel() < 90)
+                return true;
+	    
+            if (player->GetMapId() == MAP_BLASTED_LANDS_PHASE)
+            {
+                AddGossipItemFor(player, GOSSIP_ICON_CHAT, "I would like to visit the past", GOSSIP_SENDER_MAIN, GOSSIP_ACTION_INFO_DEF + 0);
+            }
+            else if (player->GetMapId() == MAP_EASTERN_KINGDOMS)
+            {
+                AddGossipItemFor(player, GOSSIP_ICON_CHAT, "Return to the present", GOSSIP_SENDER_MAIN, GOSSIP_ACTION_INFO_DEF + 1);
+            }
+	    
+            SendGossipMenuFor(player, player->GetGossipTextId(me), me->GetGUID());
+	    
+            return true;
+        }
+	    
+        bool GossipSelect(Player* player, uint32 /*menuId*/, uint32 gossipListId) override
+        {
+            uint32 const action = player->PlayerTalkClass->GetGossipOptionAction(gossipListId);
+            ClearGossipMenuFor(player);
+	    
+            if (action == GOSSIP_ACTION_INFO_DEF + 0)
+            {
+                CloseGossipMenuFor(player);
+	    
+                player->CastSpell(player, SPELL_TIME_TRAVELLING, true);
+                player->SeamlessTeleportToMap(MAP_EASTERN_KINGDOMS);
+            }
+            else if (action == GOSSIP_ACTION_INFO_DEF + 1)
+            {
+                CloseGossipMenuFor(player);
+	    
+                player->RemoveAurasDueToSpell(SPELL_TIME_TRAVELLING);
+                player->SeamlessTeleportToMap(MAP_BLASTED_LANDS_PHASE);
+            }
+	    
+            return true;
+        }
+    };
+
+    CreatureAI* GetAI(Creature* creature) const override
+    {
+        return new npc_zidormi_blasted_landsAI(creature);
+    }
+};
+
+#define GOSSIP_AZEROTH "For Azeroth"
+
+class npc_archmage_khadgar_blasted_lands : public CreatureScript
+{
+public:
+    npc_archmage_khadgar_blasted_lands() : CreatureScript("npc_archmage_khadgar_blasted_lands") { }
+
+    struct npc_archmage_khadgar_blasted_landsAI : public ScriptedAI
+    {
+        npc_archmage_khadgar_blasted_landsAI(Creature* creature) : ScriptedAI(creature) { }
+
+        bool GossipHello(Player* player) override
+        {
+            if (me->IsQuestGiver())
+                player->PrepareQuestMenu(me->GetGUID());
+	    
+            if (player->GetQuestStatus(QUEST_THE_DARK_PORTAL) == QUEST_STATUS_INCOMPLETE)
+                AddGossipItemFor(player, GOSSIP_ICON_CHAT, GOSSIP_AZEROTH, GOSSIP_SENDER_MAIN, GOSSIP_ACTION_INFO_DEF + 0);
+	    
+            SendGossipMenuFor(player, player->GetGossipTextId(me), me->GetGUID());
+	    
+            return true;
+        }
+	    
+        bool GossipSelect(Player* player, uint32 /*menuId*/, uint32 gossipListId) override
+        {
+            uint32 const action = player->PlayerTalkClass->GetGossipOptionAction(gossipListId);
+            ClearGossipMenuFor(player);
+	    
+            if (action == GOSSIP_ACTION_INFO_DEF + 0)
+            {
+                CloseGossipMenuFor(player);
+	    
+                player->SendMovieStart(DARK_PORTAL_DRAENOR_MOVE);
+                player->KilledMonsterCredit(NPC_SPEAK_WITH_KHADGAR_CREDIT);
+                player->TeleportTo(1265, 4066.7370f, -2381.9917f, 94.858f, 2.90f);
+            }
+	    
+            return true;
+        }
+	};
+
+    CreatureAI* GetAI(Creature* creature) const override
+    {
+        return new npc_archmage_khadgar_blasted_landsAI(creature);
+    }
+};
+
 void AddSC_blasted_lands()
 {
-    RegisterPlayerScript(DarkPortal_Phasing);
     new spell_razelikh_teleport_group();
+    RegisterPlayerScript(DarkPortal_Phasing);
+    new npc_zidormi_blasted_lands();
+    new npc_archmage_khadgar_blasted_lands();
 }
