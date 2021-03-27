@@ -700,7 +700,7 @@ class TC_GAME_API PlayerScript : public UnitScript
         virtual void OnBindToInstance(Player* /*player*/, Difficulty /*difficulty*/, uint32 /*mapId*/, bool /*permanent*/, uint8 /*extendState*/) { }
 
         // Called when a player switches to a new zone
-        virtual void OnUpdateZone(Player* /*player*/, uint32 /*newZone*/, uint32 /*newArea*/) { }
+        virtual void OnUpdateZone(Player* /*player*/, uint32 /*newZone*/, uint32 /*oldZone*/, uint32 /*newArea*/) { }
 
         // Called when a player changes to a new map (after moving to new map)
         virtual void OnMapChanged(Player* /*player*/) { }
@@ -1080,7 +1080,7 @@ class TC_GAME_API ScriptMgr
         void OnPlayerFailedDelete(ObjectGuid guid, uint32 accountId);
         void OnPlayerSave(Player* player);
         void OnPlayerBindToInstance(Player* player, Difficulty difficulty, uint32 mapid, bool permanent, uint8 extendState);
-        void OnPlayerUpdateZone(Player* player, uint32 newZone, uint32 newArea);
+        void OnPlayerUpdateZone(Player* player, uint32 newZone, uint32 oldZone, uint32 newArea);
         void OnQuestStatusChange(Player* player, uint32 questId);
         void OnPlayerRepop(Player* player);
         void OnMovieComplete(Player* player, uint32 movieId);
@@ -1190,6 +1190,8 @@ class GenericCreatureScript : public CreatureScript
         CreatureAI* GetAI(Creature* me) const override { return new AI(me); }
 };
 #define RegisterCreatureAI(ai_name) new GenericCreatureScript<ai_name>(#ai_name)
+
+#define RegisterPlayerScript(script) new script()
 
 template <class AI, AI*(*AIFactory)(Creature*)>
 class FactoryCreatureScript : public CreatureScript

@@ -79,7 +79,45 @@ class spell_razelikh_teleport_group : public SpellScriptLoader
         }
 };
 
+enum BlastedLandsMisc
+{
+    BLASTER_LANDS_ZONE_ID   = 4,
+
+    MAP_BLASTED_LANDS_PHASE = 1190,
+    MAP_EASTERN_KINGDOMS    = 0,
+
+    SPELL_TIME_TRAVELLING   = 176111
+};
+
+class DarkPortal_Phasing: public PlayerScript
+{
+public:
+    DarkPortal_Phasing() : PlayerScript("DarkPortal_Phasing") { }
+
+    void OnUpdateZone(Player* player, uint32 newZoneID, uint32 oldZoneID, uint32 /*newAreaID*/) override
+    {
+        if (player->IsInFlight())
+            return;
+
+        if (player->GetMapId() == MAP_EASTERN_KINGDOMS || player->GetMapId() == MAP_BLASTED_LANDS_PHASE)
+        {
+            if (newZoneID != oldZoneID && (newZoneID == BLASTER_LANDS_ZONE_ID || oldZoneID == BLASTER_LANDS_ZONE_ID))
+            {
+                if (player->getLevel() >= 90 && newZoneID == BLASTER_LANDS_ZONE_ID && player->GetMapId() == MAP_EASTERN_KINGDOMS && !player->HasAura(SPELL_TIME_TRAVELLING))
+                {
+                    player->SeamlessTeleportToMap(MAP_BLASTED_LANDS_PHASE);
+                }
+                if (newZoneID != BLASTER_LANDS_ZONE_ID && player->GetMapId() == MAP_BLASTED_LANDS_PHASE)
+                {
+                    player->SeamlessTeleportToMap(MAP_EASTERN_KINGDOMS);
+                }
+            }
+        }
+    }
+};
+
 void AddSC_blasted_lands()
 {
+    RegisterPlayerScript(DarkPortal_Phasing);
     new spell_razelikh_teleport_group();
 }
