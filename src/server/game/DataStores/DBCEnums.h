@@ -202,6 +202,13 @@ enum BattlemasterListFlags
     BATTLEMASTER_LIST_FLAG_FACTIONAL            = 0x40
 };
 
+enum class ChrRacesFlag : int32
+{
+    AlliedRace  = 0x80000
+};
+
+DEFINE_ENUM_FLAG(ChrRacesFlag);
+
 enum ChrSpecializationFlag
 {
     CHR_SPECIALIZATION_FLAG_CASTER                  = 0x01,
