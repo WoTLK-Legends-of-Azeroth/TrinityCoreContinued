@@ -614,4 +614,6 @@ struct VendorItemData
     }
 };
 
+typedef std::unordered_map<uint32, float /*SparringHealthLimit*/> CreatureSparringTemplateMap;
+
 #endif // CreatureData_h__

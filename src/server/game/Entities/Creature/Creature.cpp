@@ -3265,3 +3265,8 @@ bool Creature::IsEscortNPC(bool onlyIfActive)
 
     return AI()->IsEscortNPC(onlyIfActive);
 }
+
+float Creature::GetSparringHealthLimit() const
+{
+    return sObjectMgr->GetSparringHealthLimitFor(GetEntry());
+}
