@@ -461,6 +461,7 @@ class TC_GAME_API Spell
         void EffectCastButtons(SpellEffIndex effIndex);
         void EffectRechargeItem(SpellEffIndex effIndex);
         void EffectGiveCurrency(SpellEffIndex effIndex);
+        void EffectSummonPersonalGameObject(SpellEffIndex effIndex);
         void EffectResurrectWithAura(SpellEffIndex effIndex);
         void EffectCreateAreaTrigger(SpellEffIndex effIndex);
         void EffectRemoveTalent(SpellEffIndex effIndex);
@@ -909,9 +910,10 @@ namespace Trinity
         SpellTargetCheckTypes _targetSelectionType;
         ConditionSourceInfo* _condSrcInfo;
         ConditionContainer* _condList;
+        SpellTargetObjectTypes _objectType;
 
         WorldObjectSpellTargetCheck(Unit* caster, Unit* referer, SpellInfo const* spellInfo,
-            SpellTargetCheckTypes selectionType, ConditionContainer* condList);
+            SpellTargetCheckTypes selectionType, ConditionContainer* condList, SpellTargetObjectTypes objectType);
         ~WorldObjectSpellTargetCheck();
         bool operator()(WorldObject* target);
     };
@@ -921,7 +923,7 @@ namespace Trinity
         float _range;
         Position const* _position;
         WorldObjectSpellNearbyTargetCheck(float range, Unit* caster, SpellInfo const* spellInfo,
-            SpellTargetCheckTypes selectionType, ConditionContainer* condList);
+            SpellTargetCheckTypes selectionType, ConditionContainer* condList, SpellTargetObjectTypes objectType);
         bool operator()(WorldObject* target);
     };
 
@@ -930,7 +932,7 @@ namespace Trinity
         float _range;
         Position const* _position;
         WorldObjectSpellAreaTargetCheck(float range, Position const* position, Unit* caster,
-            Unit* referer, SpellInfo const* spellInfo, SpellTargetCheckTypes selectionType, ConditionContainer* condList);
+            Unit* referer, SpellInfo const* spellInfo, SpellTargetCheckTypes selectionType, ConditionContainer* condList, SpellTargetObjectTypes objectType);
         bool operator()(WorldObject* target);
     };
 
@@ -939,7 +941,7 @@ namespace Trinity
         float _coneAngle;
         float _lineWidth;
         WorldObjectSpellConeTargetCheck(float coneAngle, float lineWidth, float range, Unit* caster,
-            SpellInfo const* spellInfo, SpellTargetCheckTypes selectionType, ConditionContainer* condList);
+            SpellInfo const* spellInfo, SpellTargetCheckTypes selectionType, ConditionContainer* condList, SpellTargetObjectTypes objectType);
         bool operator()(WorldObject* target);
     };
 
@@ -948,7 +950,7 @@ namespace Trinity
         float _range;
         Position const* _position;
         WorldObjectSpellTrajTargetCheck(float range, Position const* position, Unit* caster,
-            SpellInfo const* spellInfo, SpellTargetCheckTypes selectionType, ConditionContainer* condList);
+            SpellInfo const* spellInfo, SpellTargetCheckTypes selectionType, ConditionContainer* condList, SpellTargetObjectTypes objectType);
         bool operator()(WorldObject* target);
     };
 }

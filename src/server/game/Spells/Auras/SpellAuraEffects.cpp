@@ -19,6 +19,7 @@
 #include "Battlefield.h"
 #include "BattlefieldMgr.h"
 #include "Battleground.h"
+#include "BattlegroundPackets.h"
 #include "CellImpl.h"
 #include "Common.h"
 #include "DB2Stores.h"
@@ -28,6 +29,7 @@
 #include "LootMgr.h"
 #include "MiscPackets.h"
 #include "MotionMaster.h"
+#include "MovementPackets.h"
 #include "ObjectAccessor.h"
 #include "ObjectMgr.h"
 #include "Opcodes.h"
@@ -336,7 +338,7 @@ NonDefaultConstructible<pAuraEffectHandler> AuraEffectHandler[TOTAL_AURAS]=
     &AuraEffect::HandleNoImmediateEffect,                         //267 SPELL_AURA_MOD_IMMUNE_AURA_APPLY_SCHOOL         implemented in Unit::IsImmunedToSpellEffect
     &AuraEffect::HandleUnused,                                    //268 unused (4.3.4) old SPELL_AURA_MOD_ATTACK_POWER_OF_STAT_PERCENT.
     &AuraEffect::HandleNoImmediateEffect,                         //269 SPELL_AURA_MOD_IGNORE_TARGET_RESIST implemented in Unit::CalcAbsorbResist and CalcArmorReducedDamage
-    &AuraEffect::HandleNULL,                                      //270 SPELL_AURA_MOD_SCHOOL_MASK_DAMAGE_FROM_CASTER
+    &AuraEffect::HandleNoImmediateEffect,                         //270 SPELL_AURA_MOD_SCHOOL_MASK_DAMAGE_FROM_CASTER    implemented in Unit::SpellDamageBonusTaken and Unit::MeleeDamageBonusTaken
     &AuraEffect::HandleNoImmediateEffect,                         //271 SPELL_AURA_MOD_SPELL_DAMAGE_FROM_CASTER    implemented in Unit::SpellDamageBonusTaken and Unit::MeleeDamageBonusTaken
     &AuraEffect::HandleNoImmediateEffect,                         //272 SPELL_AURA_IGNORE_MELEE_RESET
     &AuraEffect::HandleUnused,                                    //273 clientside
@@ -410,7 +412,7 @@ NonDefaultConstructible<pAuraEffectHandler> AuraEffectHandler[TOTAL_AURAS]=
     &AuraEffect::HandleModSpellCategoryCooldown,                  //341 SPELL_AURA_MOD_SPELL_CATEGORY_COOLDOWN
     &AuraEffect::HandleModMeleeRangedSpeedPct,                    //342 SPELL_AURA_MOD_MELEE_RANGED_HASTE_2
     &AuraEffect::HandleNULL,                                      //343 SPELL_AURA_MOD_MELEE_DAMAGE_FROM_CASTER
-    &AuraEffect::HandleNULL,                                      //344 SPELL_AURA_MOD_AUTOATTACK_DAMAGE
+    &AuraEffect::HandleNoImmediateEffect,                         //344 SPELL_AURA_MOD_AUTOATTACK_DAMAGE - Implemented in Unit::MeleeDamageBonusDone
     &AuraEffect::HandleNoImmediateEffect,                         //345 SPELL_AURA_BYPASS_ARMOR_FOR_CASTER
     &AuraEffect::HandleEnableAltPower,                            //346 SPELL_AURA_ENABLE_ALT_POWER
     &AuraEffect::HandleNoImmediateEffect,                         //347 SPELL_AURA_MOD_SPELL_COOLDOWN_BY_HASTE  implemented in SpellHistory::StartCooldown
@@ -463,8 +465,8 @@ NonDefaultConstructible<pAuraEffectHandler> AuraEffectHandler[TOTAL_AURAS]=
     &AuraEffect::HandleShowConfirmationPrompt,                    //394 SPELL_AURA_SHOW_CONFIRMATION_PROMPT
     &AuraEffect::HandleCreateAreaTrigger,                         //395 SPELL_AURA_AREA_TRIGGER
     &AuraEffect::HandleNULL,                                      //396 SPELL_AURA_TRIGGER_SPELL_ON_POWER_AMOUNT
-    &AuraEffect::HandleNULL,                                      //397
-    &AuraEffect::HandleNULL,                                      //398
+    &AuraEffect::HandleBattlegroundPlayerPosition,                //397 SPELL_AURA_BATTLEGROUND_PLAYER_POSITION_FACTIONAL
+    &AuraEffect::HandleBattlegroundPlayerPosition,                //398 SPELL_AURA_BATTLEGROUND_PLAYER_POSITION
     &AuraEffect::HandleNULL,                                      //399
     &AuraEffect::HandleAuraModSkill,                              //400 SPELL_AURA_MOD_SKILL_2
     &AuraEffect::HandleNULL,                                      //401
@@ -657,7 +659,8 @@ int32 AuraEffect::CalculateAmount(Unit* caster)
     }
 
     GetBase()->CallScriptEffectCalcAmountHandlers(this, amount, m_canBeRecalculated);
-    amount *= GetBase()->GetStackAmount();
+    if (!GetSpellEffectInfo()->EffectAttributes.HasFlag(SpellEffectAttributes::NoScaleWithStack))
+        amount *= GetBase()->GetStackAmount();
     return amount;
 }
 
@@ -1189,6 +1192,7 @@ bool AuraEffect::CheckEffectProc(AuraApplication* aurApp, ProcEventInfo& eventIn
             if (!eventInfo.GetProcSpell() || !eventInfo.GetProcSpell()->GetCastTime())
                 return false;
             break;
+        case SPELL_AURA_MOD_SCHOOL_MASK_DAMAGE_FROM_CASTER:
         case SPELL_AURA_MOD_SPELL_DAMAGE_FROM_CASTER:
             // Compare casters
             if (GetCasterGUID() != eventInfo.GetActor()->GetGUID())
@@ -1815,8 +1819,11 @@ void AuraEffect::HandleAuraModShapeshift(AuraApplication const* aurApp, uint8 mo
         HandleShapeshiftBoosts(target, false);
     }
 
-    if (target->GetTypeId() == TYPEID_PLAYER)
-        target->ToPlayer()->InitDataForForm();
+    if (Player* playerTarget = target->ToPlayer())
+    {
+        playerTarget->SendMovementSetCollisionHeight(playerTarget->GetCollisionHeight(false), WorldPackets::Movement::UpdateCollisionHeightReason::Force);
+        playerTarget->InitDataForForm();
+    }
     else
         target->UpdateDisplayPower();
 
@@ -3013,7 +3020,10 @@ void AuraEffect::HandleAuraControlVehicle(AuraApplication const* aurApp, uint8 m
                 caster->ToCreature()->DespawnOrUnsummon();
         }
 
-        if (!(mode & AURA_EFFECT_HANDLE_CHANGE_AMOUNT))
+        bool seatChange = (mode & AURA_EFFECT_HANDLE_CHANGE_AMOUNT)                             // Seat change on the same direct vehicle
+            || target->HasAuraTypeWithCaster(SPELL_AURA_CONTROL_VEHICLE, caster->GetGUID());    // Seat change to a proxy vehicle (for example turret mounted on a siege engine)
+
+        if (!seatChange)
             caster->_ExitVehicle();
         else
             target->GetVehicleKit()->RemovePassenger(caster);  // Only remove passenger from vehicle without launching exit movement or despawning the vehicle
@@ -6145,7 +6155,7 @@ void AuraEffect::HandleProcTriggerSpellAuraProc(AuraApplication* aurApp, ProcEve
         TC_LOG_DEBUG("spells", "AuraEffect::HandleProcTriggerSpellAuraProc: Triggering spell %u from aura %u proc", triggeredSpellInfo->Id, GetId());
         triggerCaster->CastSpell(triggerTarget, triggeredSpellInfo, true, nullptr, this);
     }
-    else
+    else if (triggerSpellId && GetAuraType() != SPELL_AURA_DUMMY)
         TC_LOG_ERROR("spells","AuraEffect::HandleProcTriggerSpellAuraProc: Could not trigger spell %u from aura %u proc, because the spell does not have an entry in Spell.dbc.", triggerSpellId, GetId());
 }
 
@@ -6396,6 +6406,43 @@ void AuraEffect::HandleModOverrideZonePVPType(AuraApplication const* aurApp, uin
 
     target->UpdateHostileAreaState(sAreaTableStore.LookupEntry(target->GetZoneId()));
     target->UpdatePvPState();
+}
+
+void AuraEffect::HandleBattlegroundPlayerPosition(AuraApplication const* aurApp, uint8 mode, bool apply) const
+{
+    if (!(mode & AURA_EFFECT_HANDLE_REAL))
+        return;
+
+    Player* target = aurApp->GetTarget()->ToPlayer();
+    if (!target)
+        return;
+
+    BattlegroundMap* battlegroundMap = target->GetMap()->ToBattlegroundMap();
+    if (!battlegroundMap)
+        return;
+
+    Battleground* bg = battlegroundMap->GetBG();
+    if (!bg)
+        return;
+
+    if (apply)
+    {
+        WorldPackets::Battleground::BattlegroundPlayerPosition playerPosition;
+        playerPosition.Guid = target->GetGUID();
+        playerPosition.ArenaSlot = static_cast<uint8>(GetMiscValue());
+        playerPosition.Pos = target->GetPosition();
+
+        if (GetAuraType() == SPELL_AURA_BATTLEGROUND_PLAYER_POSITION_FACTIONAL)
+            playerPosition.IconID = target->GetTeam() == ALLIANCE ? PLAYER_POSITION_ICON_HORDE_FLAG : PLAYER_POSITION_ICON_ALLIANCE_FLAG;
+        else if (GetAuraType() == SPELL_AURA_BATTLEGROUND_PLAYER_POSITION)
+            playerPosition.IconID = target->GetTeam() == ALLIANCE ? PLAYER_POSITION_ICON_ALLIANCE_FLAG : PLAYER_POSITION_ICON_HORDE_FLAG;
+        else
+            TC_LOG_WARN("spell.auras", "Unknown aura effect %u handled by HandleBattlegroundPlayerPosition.", GetAuraType());
+
+        bg->AddPlayerPosition(playerPosition);
+    }
+    else
+        bg->RemovePlayerPosition(target->GetGUID());
 }
 
 template TC_GAME_API void AuraEffect::GetTargetList(std::list<Unit*>&) const;

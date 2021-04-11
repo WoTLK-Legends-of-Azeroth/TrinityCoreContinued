@@ -173,6 +173,8 @@ class TC_GAME_API Creature : public Unit, public GridObject<Creature>, public Ma
         CreatureData const* GetCreatureData() const { return m_creatureData; }
         CreatureAddon const* GetCreatureAddon() const;
 
+        float GetSparringHealthLimit() const;
+
         std::string const& GetAIName() const;
         std::string GetScriptName() const;
         uint32 GetScriptId() const;
@@ -207,9 +209,6 @@ class TC_GAME_API Creature : public Unit, public GridObject<Creature>, public Ma
         void AddLootMode(uint16 lootMode) { m_LootMode |= lootMode; }
         void RemoveLootMode(uint16 lootMode) { m_LootMode &= ~lootMode; }
         void ResetLootMode() { m_LootMode = LOOT_MODE_DEFAULT; }
-
-        SpellInfo const* reachWithSpellAttack(Unit* victim);
-        SpellInfo const* reachWithSpellCure(Unit* victim);
 
         uint32 m_spells[MAX_CREATURE_SPELLS];
 
@@ -290,11 +289,12 @@ class TC_GAME_API Creature : public Unit, public GridObject<Creature>, public Ma
         void GetTransportHomePosition(float& x, float& y, float& z, float& ori) const { m_transportHomePosition.GetPosition(x, y, z, ori); }
         Position const& GetTransportHomePosition() const { return m_transportHomePosition; }
 
-        uint32 GetWaypointPath() const { return m_path_id; }
-        void LoadPath(uint32 pathid) { m_path_id = pathid; }
+        uint32 GetWaypointPath() const { return _waypointPathId; }
+        void LoadPath(uint32 pathid) { _waypointPathId = pathid; }
 
-        uint32 GetCurrentWaypointID() const { return m_waypointID; }
-        void UpdateWaypointID(uint32 wpID) { m_waypointID = wpID; }
+        // nodeId, pathId
+        std::pair<uint32, uint32> GetCurrentWaypointInfo() const { return _currentWaypointNodeInfo; }
+        void UpdateCurrentWaypointInfo(uint32 nodeId, uint32 pathId) { _currentWaypointNodeInfo = { nodeId, pathId }; }
 
         bool IsReturningHome() const;
 
@@ -405,9 +405,9 @@ class TC_GAME_API Creature : public Unit, public GridObject<Creature>, public Ma
         void ForcedDespawn(uint32 timeMSToDespawn = 0, Seconds const& forceRespawnTimer = Seconds(0));
         bool CheckNoGrayAggroConfig(uint32 playerLevel, uint32 creatureLevel) const; // No aggro from gray creatures
 
-        //WaypointMovementGenerator vars
-        uint32 m_waypointID;
-        uint32 m_path_id;
+        // Waypoint path
+        uint32 _waypointPathId;
+        std::pair<uint32/*nodeId*/, uint32/*pathId*/> _currentWaypointNodeInfo;
 
         //Formation var
         CreatureGroup* m_formation;

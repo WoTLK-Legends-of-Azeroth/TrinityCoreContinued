@@ -626,6 +626,8 @@ struct ChrRacesEntry
     int8 MaleTextureFallbackSex;
     int8 FemaleTextureFallbackRaceID;
     int8 FemaleTextureFallbackSex;
+
+    EnumFlag<ChrRacesFlag> GetFlags() const { return static_cast<ChrRacesFlag>(Flags); }
 };
 
 #define MAX_MASTERY_SPELLS 2
@@ -2104,6 +2106,15 @@ struct MapDifficultyEntry
     }
 };
 
+struct MapDifficultyXConditionEntry
+{
+    uint32 ID;
+    LocalizedString FailureDescription;
+    uint32 PlayerConditionID;
+    int32 OrderIndex;
+    uint32 MapDifficultyID;
+};
+
 struct ModifierTreeEntry
 {
     uint32 ID;
@@ -2763,6 +2774,8 @@ struct SpellEffectEntry
     flag128 EffectSpellClassMask;
     int16 ImplicitTarget[2];
     uint32 SpellID;
+
+    SpellEffectAttributes GetEffectAttributes() const { return static_cast<SpellEffectAttributes>(EffectAttributes); }
 };
 
 struct SpellEquippedItemsEntry

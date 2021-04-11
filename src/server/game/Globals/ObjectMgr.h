@@ -102,7 +102,7 @@ struct TempSummonData
 // DB scripting commands
 enum ScriptCommands
 {
-    SCRIPT_COMMAND_TALK                  = 0,                // source/target = Creature, target = any, datalong = talk type (0=say, 1=whisper, 2=yell, 3=emote text, 4=boss emote text), datalong2 & 1 = player talk (instead of creature), dataint = string_id
+    SCRIPT_COMMAND_TALK                  = 0,                // source/target = Creature, target = any, datalong = talk type (see ChatType enum), datalong2 & 1 = player talk (instead of creature), dataint = string_id
     SCRIPT_COMMAND_EMOTE                 = 1,                // source/target = Creature, datalong = emote id, datalong2 = 0: set emote state; > 0: play emote state
     SCRIPT_COMMAND_FIELD_SET_DEPRECATED  = 2,
     SCRIPT_COMMAND_MOVE_TO               = 3,                // source/target = Creature, datalong2 = time to reach, x/y/z = destination
@@ -1174,6 +1174,7 @@ class TC_GAME_API ObjectMgr
             return nullptr;
         }
 
+        VehicleTemplate const* GetVehicleTemplate(Vehicle* veh) const;
         VehicleAccessoryList const* GetVehicleAccessoryList(Vehicle* veh) const;
 
         DungeonEncounterList const* GetDungeonEncounterList(uint32 mapId, Difficulty difficulty) const;
@@ -1244,6 +1245,7 @@ class TC_GAME_API ObjectMgr
         void LoadCreatureTemplates();
         void LoadCreatureTemplateModels();
         void LoadCreatureTemplateAddons();
+        void LoadCreatureSparringTemplate();
         void LoadCreatureTemplate(Field* fields);
         void LoadCreatureScalingData();
         void CheckCreatureTemplate(CreatureTemplate const* cInfo);
@@ -1277,6 +1279,7 @@ class TC_GAME_API ObjectMgr
         void LoadInstanceEncounters();
         void LoadMailLevelRewards();
         void LoadVehicleTemplateAccessories();
+        void LoadVehicleTemplate();
         void LoadVehicleAccessories();
 
         void LoadNPCText();
@@ -1519,6 +1522,17 @@ class TC_GAME_API ObjectMgr
                 return nullptr;
             return &itr->second;
         }
+
+        float GetSparringHealthLimitFor(uint32 entry) const
+        {
+            auto itr = _creatureSparringTemplateStore.find(entry);
+            if (itr != _creatureSparringTemplateStore.end())
+            {
+                return itr->second;
+            }
+            return 0.0f;
+        }
+
         char const* GetTrinityString(uint32 entry, LocaleConstant locale) const;
         char const* GetTrinityStringForDBCLocale(uint32 entry) const { return GetTrinityString(entry, DBCLocaleIndex); }
         LocaleConstant GetDBCLocaleIndex() const { return DBCLocaleIndex; }
@@ -1734,6 +1748,7 @@ class TC_GAME_API ObjectMgr
 
         SpellScriptsContainer _spellScriptsStore;
 
+        std::unordered_map<uint32, VehicleTemplate> _vehicleTemplateStore;
         VehicleAccessoryTemplateContainer _vehicleTemplateAccessoryStore;
         VehicleAccessoryContainer _vehicleAccessoryStore;
 
@@ -1791,6 +1806,7 @@ class TC_GAME_API ObjectMgr
         CreatureModelContainer _creatureModelStore;
         CreatureAddonContainer _creatureAddonStore;
         CreatureTemplateAddonContainer _creatureTemplateAddonStore;
+        CreatureSparringTemplateMap _creatureSparringTemplateStore;
         GameObjectAddonContainer _gameObjectAddonStore;
         GameObjectQuestItemMap _gameObjectQuestItemStore;
         CreatureQuestItemMap _creatureQuestItemStore;

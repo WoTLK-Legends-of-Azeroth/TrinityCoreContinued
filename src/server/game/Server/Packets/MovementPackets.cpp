@@ -774,7 +774,7 @@ WorldPacket const* WorldPackets::Movement::MoveSetCollisionHeight::Write()
     _worldPacket << float(Scale);
     _worldPacket << uint32(MountDisplayID);
     _worldPacket << int32(ScaleDuration);
-    _worldPacket.WriteBits(Reason, 2);
+    _worldPacket << uint8(Reason);
     _worldPacket.FlushBits();
 
     return &_worldPacket;
@@ -840,7 +840,7 @@ void WorldPackets::Movement::MoveSetCollisionHeightAck::Read()
     _worldPacket >> Data;
     _worldPacket >> Height;
     _worldPacket >> MountDisplayID;
-    Reason = UpdateCollisionHeightReason(_worldPacket.ReadBits(2));
+    Reason = _worldPacket.read<UpdateCollisionHeightReason, uint8>();
 }
 
 void WorldPackets::Movement::MoveTimeSkipped::Read()
@@ -921,7 +921,7 @@ ByteBuffer& operator<<(ByteBuffer& data, WorldPackets::Movement::MoveSetCompound
     {
         data << float(stateChange.CollisionHeight->Height);
         data << float(stateChange.CollisionHeight->Scale);
-        data.WriteBits(stateChange.CollisionHeight->Reason, 2);
+        data << uint8(stateChange.CollisionHeight->Reason);
         data.FlushBits();
     }
 

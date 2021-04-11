@@ -52,6 +52,9 @@
 #include "World.h"
 #include "WorldSession.h"
 
+#include "Hacks/boost_1_74_fibonacci_heap.h"
+BOOST_1_74_FIBONACCI_HEAP_MSVC_COMPILE_FIX(RespawnListContainer::value_type)
+
 u_map_magic MapMagic        = { {'M','A','P','S'} };
 u_map_magic MapVersionMagic = { {'v','1','.','9'} };
 u_map_magic MapAreaMagic    = { {'A','R','E','A'} };
@@ -188,6 +191,10 @@ bool Map::ExistVMap(uint32 mapid, int gx, int gy)
                 case VMAP::LoadResult::VersionMismatch:
                     TC_LOG_ERROR("maps", "VMap file '%s' couldn't be loaded", (sWorld->GetDataPath() + "vmaps/" + name).c_str());
                     TC_LOG_ERROR("maps", "This is because the version of the VMap file and the version of this module are different, please re-extract the maps with the tools compiled with this module.");
+                    return false;
+                case VMAP::LoadResult::ReadFromFileFailed:
+                    TC_LOG_ERROR("maps", "VMap file '%s' couldn't be loaded", (sWorld->GetDataPath() + "vmaps/" + name).c_str());
+                    TC_LOG_ERROR("maps", "This is because VMAP files are corrupted, please re-extract the maps with the tools compiled with this module.");
                     return false;
             }
         }
@@ -3337,7 +3344,9 @@ bool Map::CheckRespawn(RespawnInfo* info)
     {
         time_t now = time(NULL);
         time_t respawnTime;
-        if (sObjectMgr->GetLinkedRespawnGuid(thisGUID) == thisGUID) // never respawn, save "something" in DB
+        if (linkedTime == std::numeric_limits<time_t>::max())
+            respawnTime = linkedTime;
+        else if (sObjectMgr->GetLinkedRespawnGuid(thisGUID) == thisGUID) // never respawn, save "something" in DB
             respawnTime = now + WEEK;
         else // set us to check again shortly after linked unit
             respawnTime = std::max<time_t>(now, linkedTime) + urand(5, 15);
@@ -3569,6 +3578,10 @@ void Map::ApplyDynamicModeRespawnScaling(WorldObject const* obj, ObjectGuid::Low
 {
     ASSERT(mode == 1);
     ASSERT(obj->GetMap() == this);
+
+    if (IsBattlegroundOrArena())
+        return;
+
     SpawnObjectType type;
     switch (obj->GetTypeId())
     {
@@ -3583,7 +3596,7 @@ void Map::ApplyDynamicModeRespawnScaling(WorldObject const* obj, ObjectGuid::Low
     }
 
     SpawnData const* data = sObjectMgr->GetSpawnData(type, spawnId);
-    if (!data || !(data->spawnGroupData->flags & SPAWNGROUP_FLAG_DYNAMIC_SPAWN_RATE))
+    if (!data || !data->spawnGroupData || !(data->spawnGroupData->flags & SPAWNGROUP_FLAG_DYNAMIC_SPAWN_RATE))
         return;
 
     auto it = _zonePlayerCountMap.find(obj->GetZoneId());

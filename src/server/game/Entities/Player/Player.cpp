@@ -491,34 +491,7 @@ bool Player::Create(ObjectGuid::LowType guidlow, WorldPackets::Character::Charac
     SetInventorySlotCount(INVENTORY_DEFAULT_SIZE);
 
     // set starting level
-    uint32 start_level = sWorld->getIntConfig(CONFIG_START_PLAYER_LEVEL);
-    if (getClass() == CLASS_DEATH_KNIGHT)
-        start_level = sWorld->getIntConfig(CONFIG_START_DEATH_KNIGHT_PLAYER_LEVEL);
-    else if (getClass() == CLASS_DEMON_HUNTER)
-        start_level = sWorld->getIntConfig(CONFIG_START_DEMON_HUNTER_PLAYER_LEVEL);
-
-    if (createInfo->TemplateSet)
-    {
-        if (m_session->HasPermission(rbac::RBAC_PERM_USE_CHARACTER_TEMPLATES))
-        {
-            if (CharacterTemplate const* charTemplate = sCharacterTemplateDataStore->GetCharacterTemplate(*createInfo->TemplateSet))
-            {
-                if (charTemplate->Level > start_level)
-                    start_level = charTemplate->Level;
-            }
-        }
-        else
-            TC_LOG_WARN("cheat", "Account: %u (IP: %s) tried to use a character template without given permission. Possible cheating attempt.", m_session->GetAccountId(), m_session->GetRemoteAddress().c_str());
-    }
-
-    if (m_session->HasPermission(rbac::RBAC_PERM_USE_START_GM_LEVEL))
-    {
-        uint32 gm_level = sWorld->getIntConfig(CONFIG_START_GM_LEVEL);
-        if (gm_level > start_level)
-            start_level = gm_level;
-    }
-
-    SetLevel(start_level);
+    SetLevel(GetStartLevel(createInfo->Race, createInfo->Class, createInfo->TemplateSet));
 
     InitRunes();
 
@@ -1611,9 +1584,21 @@ bool Player::TeleportTo(uint32 mapid, float x, float y, float z, float orientati
     return true;
 }
 
+bool Player::TeleportTo(uint32 mapid, Position const &pos, uint32 options /*= 0*/)
+{
+    WorldLocation loc(mapid);
+    loc.Relocate(pos);
+    return TeleportTo(loc, options);
+}
+
 bool Player::TeleportTo(WorldLocation const& loc, uint32 options /*= 0*/)
 {
     return TeleportTo(loc.GetMapId(), loc.GetPositionX(), loc.GetPositionY(), loc.GetPositionZ(), loc.GetOrientation(), options);
+}
+
+bool Player::SeamlessTeleportToMap(uint32 mapid, uint32 options /*= 0*/)
+{
+    return TeleportTo(mapid, GetPosition(), options | TELE_TO_SEAMLESS);
 }
 
 bool Player::TeleportToBGEntryPoint()
@@ -1728,7 +1713,7 @@ void Player::SetObjectScale(float scale)
     SetBoundingRadius(scale * DEFAULT_PLAYER_BOUNDING_RADIUS);
     SetCombatReach(scale * DEFAULT_PLAYER_COMBAT_REACH);
     if (IsInWorld())
-        SendMovementSetCollisionHeight(scale * GetCollisionHeight(IsMounted()));
+        SendMovementSetCollisionHeight(scale * GetCollisionHeight(IsMounted()), WorldPackets::Movement::UpdateCollisionHeightReason::Scale);
 }
 
 bool Player::IsImmunedToSpellEffect(SpellInfo const* spellInfo, uint32 index, Unit* caster) const
@@ -2575,8 +2560,7 @@ void Player::InitStatsForLevel(bool reapplyMods)
     SetUpdateFieldValue(m_values.ModifyValue(&Player::m_activePlayerData).ModifyValue(&UF::ActivePlayerData::ParryPercentage), 0.0f);
     SetUpdateFieldValue(m_values.ModifyValue(&Player::m_activePlayerData).ModifyValue(&UF::ActivePlayerData::BlockPercentage), 0.0f);
 
-    // Static 30% damage blocked
-    SetUpdateFieldValue(m_values.ModifyValue(&Player::m_activePlayerData).ModifyValue(&UF::ActivePlayerData::ShieldBlock), 30);
+    SetUpdateFieldValue(m_values.ModifyValue(&Player::m_activePlayerData).ModifyValue(&UF::ActivePlayerData::ShieldBlock), 0);
 
     // Dodge percentage
     SetUpdateFieldValue(m_values.ModifyValue(&Player::m_activePlayerData).ModifyValue(&UF::ActivePlayerData::DodgePercentage), 0.0f);
@@ -7156,6 +7140,8 @@ void Player::UpdateArea(uint32 newArea)
 
 void Player::UpdateZone(uint32 newZone, uint32 newArea)
 {
+    if (!IsInWorld())
+        return;
     uint32 const oldZone = m_zoneUpdateId;
     m_zoneUpdateId = newZone;
     m_zoneUpdateTimer = ZONE_UPDATE_INTERVAL;
@@ -7216,7 +7202,7 @@ void Player::UpdateZone(uint32 newZone, uint32 newArea)
     UpdateZoneDependentAuras(newZone);
 
     // call enter script hooks after everyting else has processed
-    sScriptMgr->OnPlayerUpdateZone(this, newZone, newArea);
+    sScriptMgr->OnPlayerUpdateZone(this, newZone, oldZone, newArea);
     if (oldZone != newZone)
     {
         sOutdoorPvPMgr->HandlePlayerEnterZone(this, newZone);
@@ -7723,7 +7709,11 @@ void Player::_ApplyItemBonuses(Item* item, uint8 slot, bool apply)
     }
 
     if (uint32 armor = proto->GetArmor(itemLevel))
+    {
         HandleStatFlatModifier(UNIT_MOD_ARMOR, BASE_VALUE, float(armor), apply);
+        if (proto->GetClass() == ITEM_CLASS_ARMOR && proto->GetSubClass() == ITEM_SUBCLASS_ARMOR_SHIELD)
+            SetUpdateFieldValue(m_values.ModifyValue(&Player::m_activePlayerData).ModifyValue(&UF::ActivePlayerData::ShieldBlock), apply ? int32(armor * 2.5f) : 0);
+    }
 
     WeaponAttackType attType = GetAttackBySlot(slot, proto->GetInventoryType());
     if (attType != MAX_ATTACK && CanUseAttackType(attType))
@@ -16769,6 +16759,20 @@ void Player::SetQuestSlotTimer(uint16 slot, uint32 timer)
         .ModifyValue(&UF::QuestLog::EndTime), timer);
 }
 
+void Player::SetQuestSlotObjectiveFlag(uint16 slot, int8 objectiveIndex)
+{
+    SetUpdateFieldFlagValue(m_values.ModifyValue(&Player::m_playerData)
+        .ModifyValue(&UF::PlayerData::QuestLog, slot)
+        .ModifyValue(&UF::QuestLog::ObjectiveFlags), 1 << objectiveIndex);
+}
+
+void Player::RemoveQuestSlotObjectiveFlag(uint16 slot, int8 objectiveIndex)
+{
+    RemoveUpdateFieldFlagValue(m_values.ModifyValue(&Player::m_playerData)
+        .ModifyValue(&UF::PlayerData::QuestLog, slot)
+        .ModifyValue(&UF::QuestLog::ObjectiveFlags), 1 << objectiveIndex);
+}
+
 void Player::SetQuestCompletedBit(uint32 questBit, bool completed)
 {
     if (!questBit)
@@ -17470,9 +17474,9 @@ void Player::SetQuestObjectiveData(QuestObjective const& objective, int32 data)
         if (!objective.IsStoringFlag())
             SetQuestSlotCounter(log_slot, objective.StorageIndex, status.ObjectiveData[objective.StorageIndex]);
         else if (data)
-            SetQuestSlotState(log_slot, 256 << objective.StorageIndex);
+            SetQuestSlotObjectiveFlag(log_slot, objective.StorageIndex);
         else
-            RemoveQuestSlotState(log_slot, 256 << objective.StorageIndex);
+            RemoveQuestSlotObjectiveFlag(log_slot, objective.StorageIndex);
     }
 }
 
@@ -18118,7 +18122,6 @@ bool Player::LoadFromDB(ObjectGuid guid, CharacterDatabaseQueryHolder* holder)
 
             //join player to battleground group
             currentBg->EventPlayerLoggedIn(this);
-            currentBg->AddOrSetPlayerToCorrectBgGroup(this, m_bgData.bgTeam);
 
             SetInviteForBattlegroundQueueType(bgQueueTypeId, currentBg->GetInstanceID());
         }
@@ -19554,7 +19557,7 @@ void Player::_LoadQuestStatusObjectives(PreparedQueryResult result)
                     if (!objectiveItr->IsStoringFlag())
                         SetQuestSlotCounter(slot, objectiveIndex, data);
                     else if (data)
-                        SetQuestSlotState(slot, 256 << objectiveIndex);
+                        SetQuestSlotObjectiveFlag(slot, objectiveIndex);
                 }
                 else
                     TC_LOG_ERROR("entities.player", "Player::_LoadQuestStatusObjectives: Player '%s' (%s) has quest %d out of range objective index %u.", GetName().c_str(), GetGUID().ToString().c_str(), questID, objectiveIndex);
@@ -20069,65 +20072,84 @@ void Player::SendRaidInfo()
 
 bool Player::Satisfy(AccessRequirement const* ar, uint32 target_map, bool report)
 {
-    if (!IsGameMaster() && ar)
+    if (!IsGameMaster())
     {
         uint8 LevelMin = 0;
         uint8 LevelMax = 0;
+        int32 failedMapDifficultyXCondition = 0;
+        uint32 missingItem = 0;
+        uint32 missingQuest = 0;
+        uint32 missingAchievement = 0;
 
         MapEntry const* mapEntry = sMapStore.LookupEntry(target_map);
         if (!mapEntry)
             return false;
 
-        if (!sWorld->getBoolConfig(CONFIG_INSTANCE_IGNORE_LEVEL))
-        {
-            if (ar->levelMin && getLevel() < ar->levelMin)
-                LevelMin = ar->levelMin;
-            if (ar->levelMax && getLevel() > ar->levelMax)
-                LevelMax = ar->levelMax;
-        }
-
-        uint32 missingItem = 0;
-        if (ar->item)
-        {
-            if (!HasItemCount(ar->item) &&
-                (!ar->item2 || !HasItemCount(ar->item2)))
-                missingItem = ar->item;
-        }
-        else if (ar->item2 && !HasItemCount(ar->item2))
-            missingItem = ar->item2;
-
-        if (DisableMgr::IsDisabledFor(DISABLE_TYPE_MAP, target_map, this))
-        {
-            GetSession()->SendNotification("%s", GetSession()->GetTrinityString(LANG_INSTANCE_CLOSED));
-            return false;
-        }
-
-        uint32 missingQuest = 0;
-        if (GetTeam() == ALLIANCE && ar->quest_A && !GetQuestRewardStatus(ar->quest_A))
-            missingQuest = ar->quest_A;
-        else if (GetTeam() == HORDE && ar->quest_H && !GetQuestRewardStatus(ar->quest_H))
-            missingQuest = ar->quest_H;
-
-        uint32 missingAchievement = 0;
-        Player* leader = this;
-        ObjectGuid leaderGuid = GetGroup() ? GetGroup()->GetLeaderGUID() : GetGUID();
-        if (leaderGuid != GetGUID())
-            leader = ObjectAccessor::FindPlayer(leaderGuid);
-
-        if (ar->achievement)
-            if (!leader || !leader->HasAchieved(ar->achievement))
-                missingAchievement = ar->achievement;
-
         Difficulty target_difficulty = GetDifficultyID(mapEntry);
         MapDifficultyEntry const* mapDiff = sDB2Manager.GetDownscaledMapDifficultyData(target_map, target_difficulty);
-        if (LevelMin || LevelMax || missingItem || missingQuest || missingAchievement)
+        if (!sWorld->getBoolConfig(CONFIG_INSTANCE_IGNORE_LEVEL))
+        {
+            if (DB2Manager::MapDifficultyConditionsContainer const* mapDifficultyConditions = sDB2Manager.GetMapDifficultyConditions(mapDiff->ID))
+            {
+                for (auto&& itr : *mapDifficultyConditions)
+                {
+                    if (!ConditionMgr::IsPlayerMeetingCondition(this, itr.second))
+                    {
+                        failedMapDifficultyXCondition = itr.first;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (ar)
+        {
+            if (!sWorld->getBoolConfig(CONFIG_INSTANCE_IGNORE_LEVEL))
+            {
+                if (ar->levelMin && getLevel() < ar->levelMin)
+                    LevelMin = ar->levelMin;
+                if (ar->levelMax && getLevel() > ar->levelMax)
+                    LevelMax = ar->levelMax;
+            }
+
+            if (ar->item)
+            {
+                if (!HasItemCount(ar->item) &&
+                    (!ar->item2 || !HasItemCount(ar->item2)))
+                    missingItem = ar->item;
+            }
+            else if (ar->item2 && !HasItemCount(ar->item2))
+                missingItem = ar->item2;
+
+            if (DisableMgr::IsDisabledFor(DISABLE_TYPE_MAP, target_map, this))
+            {
+                GetSession()->SendNotification("%s", GetSession()->GetTrinityString(LANG_INSTANCE_CLOSED));
+                return false;
+            }
+
+            if (GetTeam() == ALLIANCE && ar->quest_A && !GetQuestRewardStatus(ar->quest_A))
+                missingQuest = ar->quest_A;
+            else if (GetTeam() == HORDE && ar->quest_H && !GetQuestRewardStatus(ar->quest_H))
+                missingQuest = ar->quest_H;
+
+            Player* leader = this;
+            ObjectGuid leaderGuid = GetGroup() ? GetGroup()->GetLeaderGUID() : GetGUID();
+            if (leaderGuid != GetGUID())
+                leader = ObjectAccessor::FindPlayer(leaderGuid);
+
+            if (ar->achievement)
+                if (!leader || !leader->HasAchieved(ar->achievement))
+                    missingAchievement = ar->achievement;
+        }
+
+        if (LevelMin || LevelMax || failedMapDifficultyXCondition || missingItem || missingQuest || missingAchievement)
         {
             if (report)
             {
                 if (missingQuest && !ar->questFailedText.empty())
                     ChatHandler(GetSession()).PSendSysMessage("%s", ar->questFailedText.c_str());
-                else if (mapDiff->Message[sWorld->GetDefaultDbcLocale()][0] != '\0') // if (missingAchievement) covered by this case
-                    SendTransferAborted(target_map, TRANSFER_ABORT_DIFFICULTY, target_difficulty);
+                else if (mapDiff->Message[sWorld->GetDefaultDbcLocale()][0] != '\0' || failedMapDifficultyXCondition) // if (missingAchievement) covered by this case
+                    SendTransferAborted(target_map, TRANSFER_ABORT_DIFFICULTY, target_difficulty, failedMapDifficultyXCondition);
                 else if (missingItem)
                     GetSession()->SendNotification(GetSession()->GetTrinityString(LANG_LEVEL_MINREQUIRED_AND_ITEM), LevelMin, ASSERT_NOTNULL(sObjectMgr->GetItemTemplate(missingItem))->GetName(GetSession()->GetSessionDbcLocale()));
                 else if (LevelMin)
@@ -23641,6 +23663,40 @@ WorldLocation Player::GetStartPosition() const
     return WorldLocation(mapId, info->positionX, info->positionY, info->positionZ, 0);
 }
 
+uint8 Player::GetStartLevel(uint8 race, uint8 playerClass, Optional<int32> characterTemplateId) const
+{
+    uint8 startLevel = sWorld->getIntConfig(CONFIG_START_PLAYER_LEVEL);
+    if (sChrRacesStore.AssertEntry(race)->GetFlags().HasFlag(ChrRacesFlag::AlliedRace))
+        startLevel = sWorld->getIntConfig(CONFIG_START_ALLIED_RACE_LEVEL);
+
+    if (playerClass == CLASS_DEATH_KNIGHT)
+    {
+        if (race == RACE_PANDAREN_ALLIANCE || race == RACE_PANDAREN_HORDE)
+            startLevel = std::max<uint8>(sWorld->getIntConfig(CONFIG_START_ALLIED_RACE_LEVEL), startLevel);
+        else
+            startLevel = std::max<uint8>(sWorld->getIntConfig(CONFIG_START_DEATH_KNIGHT_PLAYER_LEVEL), startLevel);
+    }
+    else if (playerClass == CLASS_DEMON_HUNTER)
+        startLevel = std::max<uint8>(sWorld->getIntConfig(CONFIG_START_DEMON_HUNTER_PLAYER_LEVEL), startLevel);
+
+    if (characterTemplateId)
+    {
+        if (m_session->HasPermission(rbac::RBAC_PERM_USE_CHARACTER_TEMPLATES))
+        {
+            if (CharacterTemplate const* charTemplate = sCharacterTemplateDataStore->GetCharacterTemplate(*characterTemplateId))
+                startLevel = std::max(charTemplate->Level, startLevel);
+        }
+        else
+            TC_LOG_WARN("cheat", "Account: %u (IP: %s) tried to use a character template without given permission. Possible cheating attempt.",
+                m_session->GetAccountId(), m_session->GetRemoteAddress().c_str());
+    }
+
+    if (m_session->HasPermission(rbac::RBAC_PERM_USE_START_GM_LEVEL))
+        startLevel = std::max<uint8>(sWorld->getIntConfig(CONFIG_START_GM_LEVEL), startLevel);
+
+    return startLevel;
+}
+
 bool Player::HaveAtClient(Object const* u) const
 {
     return u == this || m_clientGUIDs.find(u->GetGUID()) != m_clientGUIDs.end();
@@ -24239,12 +24295,13 @@ void Player::SendUpdateToOutOfRangeGroupMembers()
         pet->ResetGroupUpdateFlag();
 }
 
-void Player::SendTransferAborted(uint32 mapid, TransferAbortReason reason, uint8 arg) const
+void Player::SendTransferAborted(uint32 mapid, TransferAbortReason reason, uint8 arg /*= 0*/, int32 mapDifficultyXConditionID /*= 0*/) const
 {
     WorldPackets::Movement::TransferAborted transferAborted;
     transferAborted.MapID = mapid;
     transferAborted.Arg = arg;
     transferAborted.TransfertAbort = reason;
+    transferAborted.MapDifficultyXConditionID = mapDifficultyXConditionID;
     SendDirectMessage(transferAborted.Write());
 }
 
@@ -25754,6 +25811,17 @@ void Player::ProcessTerrainStatusUpdate(ZLiquidStatus status, Optional<LiquidDat
     }
     else
         m_MirrorTimerFlags &= ~(UNDERWATER_INWATER | UNDERWATER_INLAVA | UNDERWATER_INSLIME | UNDERWATER_INDARKWATER);
+}
+
+float Player::GetBlockPercent(uint8 attackerLevel) const
+{
+    float blockArmor = float(*m_activePlayerData->ShieldBlock);
+    float armorConstant = sDB2Manager.EvaluateExpectedStat(ExpectedStatType::ArmorConstant, attackerLevel, -2, 0, CLASS_NONE);
+
+    if (!(blockArmor + armorConstant))
+        return 0;
+
+    return std::min(blockArmor / (blockArmor + armorConstant), 0.85f);
 }
 
 void Player::SetCanParry(bool value)
@@ -27935,7 +28003,7 @@ void Player::DeleteGarrison()
     }
 }
 
-void Player::SendMovementSetCollisionHeight(float height)
+void Player::SendMovementSetCollisionHeight(float height, WorldPackets::Movement::UpdateCollisionHeightReason reason)
 {
     WorldPackets::Movement::MoveSetCollisionHeight setCollisionHeight;
     setCollisionHeight.MoverGUID = GetGUID();
@@ -27944,7 +28012,7 @@ void Player::SendMovementSetCollisionHeight(float height)
     setCollisionHeight.Scale = GetObjectScale();
     setCollisionHeight.MountDisplayID = GetMountDisplayId();
     setCollisionHeight.ScaleDuration = m_unitData->ScaleDuration;
-    setCollisionHeight.Reason = WorldPackets::Movement::UPDATE_COLLISION_HEIGHT_MOUNT;
+    setCollisionHeight.Reason = reason;
     SendDirectMessage(setCollisionHeight.Write());
 
     WorldPackets::Movement::MoveUpdateCollisionHeight updateCollisionHeight;

@@ -55,6 +55,7 @@
 #include "WorldPacket.h"
 #include <boost/thread/shared_mutex.hpp>
 #include <boost/thread/locks.hpp>
+#include <cstdarg>
 #include <zlib.h>
 
 void WorldSession::HandleRepopRequest(WorldPackets::Misc::RepopRequest& /*packet*/)
@@ -725,6 +726,18 @@ void WorldSession::HandleCompleteMovie(WorldPackets::Misc::CompleteMovie& /*pack
     uint32 movie = _player->GetMovie();
     if (!movie)
         return;
+
+    auto itr = std::find_if(_player->MovieDelayedActions.begin(), _player->MovieDelayedActions.end(), [movie](const std::pair<uint32, std::function<void()>>& elem) -> bool
+    {
+        return elem.first == movie;
+    });
+
+    if (itr != _player->MovieDelayedActions.end())
+    {
+        (*itr).second();
+        (*itr).second = nullptr;
+        _player->MovieDelayedActions.erase(itr);
+    }
 
     _player->SetMovie(0);
     sScriptMgr->OnMovieComplete(_player, movie);

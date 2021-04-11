@@ -944,7 +944,7 @@ bool Aura::ModStackAmount(int32 num, AuraRemoveMode removeMode /*= AURA_REMOVE_B
         return true;
     }
 
-    bool refresh = stackAmount >= GetStackAmount();
+    bool refresh = stackAmount >= GetStackAmount() && (m_spellInfo->StackAmount || !m_spellInfo->HasAttribute(SPELL_ATTR1_DONT_REFRESH_DURATION_ON_RECAST));
 
     // Update stack amount
     SetStackAmount(stackAmount);
@@ -993,6 +993,9 @@ bool Aura::IsDeathPersistent() const
 bool Aura::CanBeSaved() const
 {
     if (IsPassive())
+        return false;
+
+    if (GetSpellInfo()->IsChanneled())
         return false;
 
     // Check if aura is single target, not only spell info
@@ -2208,7 +2211,7 @@ bool Aura::CallScriptCheckEffectProcHandlers(AuraEffect const* aurEff, AuraAppli
     return result;
 }
 
-bool Aura::CallScriptEffectProcHandlers(AuraEffect const* aurEff, AuraApplication const* aurApp, ProcEventInfo& eventInfo)
+bool Aura::CallScriptEffectProcHandlers(AuraEffect* aurEff, AuraApplication const* aurApp, ProcEventInfo& eventInfo)
 {
     bool preventDefault = false;
     for (auto scritr = m_loadedScripts.begin(); scritr != m_loadedScripts.end(); ++scritr)
@@ -2227,7 +2230,7 @@ bool Aura::CallScriptEffectProcHandlers(AuraEffect const* aurEff, AuraApplicatio
     return preventDefault;
 }
 
-void Aura::CallScriptAfterEffectProcHandlers(AuraEffect const* aurEff, AuraApplication const* aurApp, ProcEventInfo& eventInfo)
+void Aura::CallScriptAfterEffectProcHandlers(AuraEffect* aurEff, AuraApplication const* aurApp, ProcEventInfo& eventInfo)
 {
     for (auto scritr = m_loadedScripts.begin(); scritr != m_loadedScripts.end(); ++scritr)
     {

@@ -141,6 +141,7 @@ enum AreaFlags
 enum AreaFlags2
 {
     AREA_FLAG_2_DONT_SHOW_SANCTUARY = 0x00000200,                // Hides sanctuary status from zone text color (Script_GetZonePVPInfo)
+    AREA_FLAG_2_CAN_ENABLE_WAR_MODE = 0x00001000,                // Allows enabling war mode
 };
 
 enum AreaMountFlags
@@ -200,6 +201,13 @@ enum BattlemasterListFlags
     BATTLEMASTER_LIST_FLAG_BRAWL                = 0x20,
     BATTLEMASTER_LIST_FLAG_FACTIONAL            = 0x40
 };
+
+enum class ChrRacesFlag : int32
+{
+    AlliedRace  = 0x80000
+};
+
+DEFINE_ENUM_FLAG(ChrRacesFlag);
 
 enum ChrSpecializationFlag
 {
@@ -1250,6 +1258,18 @@ enum SpellCategoryFlags
     SPELL_CATEGORY_FLAG_COOLDOWN_STARTS_ON_EVENT            = 0x04,
     SPELL_CATEGORY_FLAG_COOLDOWN_EXPIRES_AT_DAILY_RESET     = 0x08
 };
+
+enum class SpellEffectAttributes
+{
+    None                                    = 0,
+    UnaffectedByInvulnerability             = 0x000001, // not cancelled by immunities
+    NoScaleWithStack                        = 0x000040,
+    StackAuraAmountOnRecast                 = 0x008000, // refreshing periodic auras with this attribute will add remaining damage to new aura
+    AllowAnyExplicitTarget                  = 0x100000,
+    IgnoreDuringCooldownTimeRateCalculation = 0x800000
+};
+
+DEFINE_ENUM_FLAG(SpellEffectAttributes);
 
 #define MAX_SPELL_EFFECTS 32
 #define MAX_EFFECT_MASK 0xFFFFFFFF

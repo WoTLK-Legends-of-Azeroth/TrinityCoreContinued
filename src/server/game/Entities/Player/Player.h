@@ -103,6 +103,11 @@ namespace WorldPackets
     {
         struct CharacterCreateInfo;
     }
+
+    namespace Movement
+    {
+        enum class UpdateCollisionHeightReason : uint8;
+    }
 }
 
 typedef std::deque<Mail*> PlayerMails;
@@ -1022,7 +1027,9 @@ class TC_GAME_API Player : public Unit, public GridObject<Player>
         void SetObjectScale(float scale) override;
 
         bool TeleportTo(uint32 mapid, float x, float y, float z, float orientation, uint32 options = 0);
+        bool TeleportTo(uint32 mapid, Position const &pos, uint32 options = 0);
         bool TeleportTo(WorldLocation const& loc, uint32 options = 0);
+        bool SeamlessTeleportToMap(uint32 mapid, uint32 options = 0);
         bool TeleportToBGEntryPoint();
 
         bool HasSummonPending() const;
@@ -1044,7 +1051,7 @@ class TC_GAME_API Player : public Unit, public GridObject<Player>
         void SendInitialPacketsBeforeAddToMap();
         void SendInitialPacketsAfterAddToMap();
         void SendSupercededSpell(uint32 oldSpell, uint32 newSpell) const;
-        void SendTransferAborted(uint32 mapid, TransferAbortReason reason, uint8 arg = 0) const;
+        void SendTransferAborted(uint32 mapid, TransferAbortReason reason, uint8 arg = 0, int32 mapDifficultyXConditionID = 0) const;
         void SendInstanceResetWarning(uint32 mapid, Difficulty difficulty, uint32 time, bool welcome) const;
 
         bool CanInteractWithQuestGiver(Object* questGiver) const;
@@ -1084,6 +1091,8 @@ class TC_GAME_API Player : public Unit, public GridObject<Player>
         void SetGMVisible(bool on);
         void SetPvPDeath(bool on) { if (on) m_ExtraFlags |= PLAYER_EXTRA_PVP_DEATH; else m_ExtraFlags &= ~PLAYER_EXTRA_PVP_DEATH; }
 
+        uint32 GetXP() const { return m_activePlayerData->XP; }
+        uint32 GetXPForNextLevel() const { return m_activePlayerData->NextLevelXP; }
         void SetXP(uint32 xp);
         void GiveXP(uint32 xp, Unit* victim, float group_rate=1.0f);
         void GiveLevel(uint8 level);
@@ -1402,6 +1411,8 @@ class TC_GAME_API Player : public Unit, public GridObject<Player>
         void SetQuestSlotState(uint16 slot, uint32 state);
         void RemoveQuestSlotState(uint16 slot, uint32 state);
         void SetQuestSlotTimer(uint16 slot, uint32 timer);
+        void SetQuestSlotObjectiveFlag(uint16 slot, int8 objectiveIndex);
+        void RemoveQuestSlotObjectiveFlag(uint16 slot, int8 objectiveIndex);
         void SetQuestCompletedBit(uint32 questBit, bool completed);
 
         uint16 GetReqKillOrCastCurrentCount(uint32 quest_id, int32 entry) const;
@@ -2016,7 +2027,7 @@ class TC_GAME_API Player : public Unit, public GridObject<Player>
         int32 CalculateCorpseReclaimDelay(bool load = false) const;
         void SendCorpseReclaimDelay(uint32 delay) const;
 
-        uint32 GetBlockPercent() const override { return m_activePlayerData->ShieldBlock; }
+        float GetBlockPercent(uint8 attackerLevel) const override;
         bool CanParry() const { return m_canParry; }
         void SetCanParry(bool value);
         bool CanBlock() const { return m_canBlock; }
@@ -2208,6 +2219,7 @@ class TC_GAME_API Player : public Unit, public GridObject<Player>
         float m_homebindZ;
 
         WorldLocation GetStartPosition() const;
+        uint8 GetStartLevel(uint8 race, uint8 playerClass, Optional<int32> characterTemplateId) const;
 
         // currently visible objects at player client
         GuidUnorderedSet m_clientGUIDs;
@@ -2371,7 +2383,7 @@ class TC_GAME_API Player : public Unit, public GridObject<Player>
 
         void ValidateMovementInfo(MovementInfo* mi);
 
-        void SendMovementSetCollisionHeight(float height);
+        void SendMovementSetCollisionHeight(float height, WorldPackets::Movement::UpdateCollisionHeightReason reason);
 
         bool CanFly() const override { return m_movementInfo.HasMovementFlag(MOVEMENTFLAG_CAN_FLY); }
 
@@ -2417,6 +2429,12 @@ class TC_GAME_API Player : public Unit, public GridObject<Player>
                 .ModifyValue(&Player::m_activePlayerData)
                 .ModifyValue(&UF::ActivePlayerData::RestInfo, type)
                 .ModifyValue(&UF::RestInfo::Threshold), threshold);
+        }
+
+        std::vector<std::pair<uint32, std::function<void()>>> MovieDelayedActions;
+        void AddMovieDelayedAction(uint32 movieId, std::function<void()> && function)
+        {
+            MovieDelayedActions.push_back(std::pair<uint32, std::function<void()>>(movieId, function));
         }
 
         void SendPlayerChoice(ObjectGuid sender, int32 choiceId);
