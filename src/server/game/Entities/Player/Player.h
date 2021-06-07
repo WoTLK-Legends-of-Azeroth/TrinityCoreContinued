@@ -476,6 +476,7 @@ enum PlayerLocalFlags
     PLAYER_LOCAL_FLAG_USING_PARTY_GARRISON          = 0x00000100,
     PLAYER_LOCAL_FLAG_CAN_USE_OBJECTS_MOUNTED       = 0x00000200,
     PLAYER_LOCAL_FLAG_CAN_VISIT_PARTY_GARRISON      = 0x00000400,
+    PLAYER_LOCAL_FLAG_WAR_MODE                      = 0x00000800,
     PLAYER_LOCAL_FLAG_ACCOUNT_SECURED               = 0x00001000,   // Script_IsAccountSecured
     PLAYER_LOCAL_FLAG_OVERRIDE_TRANSPORT_SERVER_TIME= 0x00008000,
     PLAYER_LOCAL_FLAG_MENTOR_RESTRICTED             = 0x00020000,
@@ -503,14 +504,19 @@ enum MirrorTimerType
 enum PlayerExtraFlags
 {
     // gm abilities
-    PLAYER_EXTRA_GM_ON              = 0x0001,
-    PLAYER_EXTRA_ACCEPT_WHISPERS    = 0x0004,
-    PLAYER_EXTRA_TAXICHEAT          = 0x0008,
-    PLAYER_EXTRA_GM_INVISIBLE       = 0x0010,
-    PLAYER_EXTRA_GM_CHAT            = 0x0020,               // Show GM badge in chat messages
+    PLAYER_EXTRA_GM_ON                      = 0x0001,
+    PLAYER_EXTRA_ACCEPT_WHISPERS            = 0x0004,
+    PLAYER_EXTRA_TAXICHEAT                  = 0x0008,
+    PLAYER_EXTRA_GM_INVISIBLE               = 0x0010,
+    PLAYER_EXTRA_GM_CHAT                    = 0x0020,       // Show GM badge in chat messages
 
     // other states
-    PLAYER_EXTRA_PVP_DEATH          = 0x0100                // store PvP death status until corpse creating.
+    PLAYER_EXTRA_PVP_DEATH                  = 0x0100,       // store PvP death status until corpse creating.
+
+    // Character services markers
+    PLAYER_EXTRA_HAS_RACE_CHANGED           = 0x0200,
+    PLAYER_EXTRA_GRANTED_LEVELS_FROM_RAF    = 0x0400,
+    PLAYER_EXTRA_LEVEL_BOOSTED              = 0x0800,
 };
 
 // 2^n values
@@ -1129,6 +1135,12 @@ class TC_GAME_API Player : public Unit, public GridObject<Player>
         bool isGMVisible() const { return !(m_ExtraFlags & PLAYER_EXTRA_GM_INVISIBLE); }
         void SetGMVisible(bool on);
         void SetPvPDeath(bool on) { if (on) m_ExtraFlags |= PLAYER_EXTRA_PVP_DEATH; else m_ExtraFlags &= ~PLAYER_EXTRA_PVP_DEATH; }
+        bool HasRaceChanged() const { return (m_ExtraFlags & PLAYER_EXTRA_HAS_RACE_CHANGED) != 0; }
+        void SetHasRaceChanged() { m_ExtraFlags |= PLAYER_EXTRA_HAS_RACE_CHANGED; }
+        bool HasBeenGrantedLevelsFromRaF() const { return (m_ExtraFlags & PLAYER_EXTRA_GRANTED_LEVELS_FROM_RAF) != 0; }
+        void SetBeenGrantedLevelsFromRaF() { m_ExtraFlags |= PLAYER_EXTRA_GRANTED_LEVELS_FROM_RAF; }
+        bool HasLevelBoosted() const { return (m_ExtraFlags & PLAYER_EXTRA_LEVEL_BOOSTED) != 0; }
+        void SetHasLevelBoosted() { m_ExtraFlags |= PLAYER_EXTRA_LEVEL_BOOSTED; }
 
         uint32 GetXP() const { return m_activePlayerData->XP; }
         uint32 GetXPForNextLevel() const { return m_activePlayerData->NextLevelXP; }
@@ -2663,6 +2675,11 @@ class TC_GAME_API Player : public Unit, public GridObject<Player>
 
         void AddAuraVision(PlayerFieldByte2Flags flags) { SetUpdateFieldFlagValue(m_values.ModifyValue(&Player::m_activePlayerData).ModifyValue(&UF::ActivePlayerData::AuraVision), flags); }
         void RemoveAuraVision(PlayerFieldByte2Flags flags) { RemoveUpdateFieldFlagValue(m_values.ModifyValue(&Player::m_activePlayerData).ModifyValue(&UF::ActivePlayerData::AuraVision), flags); }
+
+        bool IsInFriendlyArea() const;
+        bool IsFriendlyArea(AreaTableEntry const* inArea) const;
+
+        bool CanEnableWarModeInArea() const;
 
         UF::UpdateField<UF::PlayerData, 0, TYPEID_PLAYER> m_playerData;
         UF::UpdateField<UF::ActivePlayerData, 0, TYPEID_ACTIVE_PLAYER> m_activePlayerData;
