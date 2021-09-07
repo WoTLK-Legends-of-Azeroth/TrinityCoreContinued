@@ -2380,8 +2380,9 @@ void Spell::TargetInfo::PreprocessTarget(Spell* spell)
         if (missInfo != SPELL_MISS_NONE)
         {
             if (missInfo != SPELL_MISS_MISS)
-                spell->m_caster->ToUnit()->SendSpellMiss(unit, spell->m_spellInfo->Id, missInfo);
+                spell->m_caster->SendSpellMiss(unit, spell->m_spellInfo->Id, missInfo);
             spell->m_damage = 0;
+            spell->m_healing = 0;
             _spellHitTarget = nullptr;
         }
     }
@@ -2645,6 +2646,21 @@ void Spell::TargetInfo::DoDamageAndTriggers(Spell* spell)
         else if (spell->m_caster->GetTypeId() == TYPEID_GAMEOBJECT && spell->m_caster->ToGameObject()->AI())
             spell->m_caster->ToGameObject()->AI()->SpellHitTarget(_spellHitTarget, spell->m_spellInfo);
 
+        if (spell->_spellAura)
+        {
+            if (AuraApplication* aurApp = spell->_spellAura->GetApplicationOfTarget(_spellHitTarget->GetGUID()))
+            {
+                // only apply unapplied effects (for reapply case)
+                uint32 effMask = EffectMask & aurApp->GetEffectsToApply();
+                for (uint8 i = 0; i < spell->m_spellInfo->GetEffects().size(); ++i)
+                    if ((effMask & (1 << i)) && aurApp->HasEffect(i))
+                        effMask &= ~(1 << i);
+
+                if (effMask)
+                    _spellHitTarget->_ApplyAura(aurApp, effMask);
+            }
+        }
+
         // Needs to be called after dealing damage/healing to not remove breaking on damage auras
         spell->DoTriggersOnSpellHit(_spellHitTarget, EffectMask);
 
@@ -2733,7 +2749,7 @@ SpellMissInfo Spell::PreprocessSpellHit(Unit* unit, TargetInfo& hitInfo)
         else if (m_caster->IsFriendlyTo(unit))
         {
             // for delayed spells ignore negative spells (after duel end) for friendly targets
-            if (m_spellInfo->HasHitDelay() && unit->GetTypeId() == TYPEID_PLAYER && !IsPositive() && !m_caster->IsValidSpellAttackTarget(unit, m_spellInfo))
+            if (m_spellInfo->HasHitDelay() && unit->GetTypeId() == TYPEID_PLAYER && !IsPositive() && !m_caster->IsValidAssistTarget(unit, m_spellInfo))
                 return SPELL_MISS_EVADE;
 
             // assisting case, healing and resurrection
@@ -2799,7 +2815,7 @@ SpellMissInfo Spell::PreprocessSpellHit(Unit* unit, TargetInfo& hitInfo)
             }
         }
 
-        hitInfo.AuraDuration = m_spellInfo->GetMaxDuration();
+        hitInfo.AuraDuration = Aura::CalcMaxDuration(m_spellInfo, origCaster);
 
         // unit is immune to aura if it was diminished to 0 duration
         if (!hitInfo.Positive && !unit->ApplyDiminishingToDuration(m_spellInfo, hitInfo.AuraDuration, origCaster, diminishLevel))
@@ -2822,6 +2838,14 @@ void Spell::DoSpellEffectHit(Unit* unit, SpellEffectInfo const& spellEffectInfo,
         {
             bool refresh = false;
 
+            // delayed spells with multiple targets need to create a new aura object, otherwise we'll access a deleted aura
+            if (m_spellInfo->HasHitDelay() && !m_spellInfo->IsChanneled())
+            {
+                _spellAura = nullptr;
+                if (Aura* aura = unit->GetAura(m_spellInfo->Id, caster->GetGUID(), m_CastItem ? m_CastItem->GetGUID() : ObjectGuid::Empty, aura_effmask))
+                    _spellAura = aura->ToUnitAura();
+            }
+
             if (!_spellAura)
             {
                 bool const resetPeriodicTimer = !(_triggeredCastFlags & TRIGGERED_DONT_RESET_PERIODIC_TIMER);
@@ -2837,54 +2861,53 @@ void Spell::DoSpellEffectHit(Unit* unit, SpellEffectInfo const& spellEffectInfo,
                     .IsRefresh = &refresh;
 
                 if (Aura* aura = Aura::TryRefreshStackOrCreate(createInfo))
+                {
                     _spellAura = aura->ToUnitAura();
+
+                    // Set aura stack amount to desired value
+                    if (m_spellValue->AuraStackAmount > 1)
+                    {
+                        if (!refresh)
+                            _spellAura->SetStackAmount(m_spellValue->AuraStackAmount);
+                        else
+                            _spellAura->ModStackAmount(m_spellValue->AuraStackAmount);
+                    }
+
+                    _spellAura->SetDiminishGroup(hitInfo.DRGroup);
+
+                    hitInfo.AuraDuration = caster->ModSpellDuration(m_spellInfo, unit, hitInfo.AuraDuration, hitInfo.Positive, _spellAura->GetEffectMask());
+
+                    if (hitInfo.AuraDuration > 0)
+                    {
+                        hitInfo.AuraDuration *= m_spellValue->DurationMul;
+
+                        // Haste modifies duration of channeled spells
+                        if (m_spellInfo->IsChanneled())
+                            caster->ModSpellDurationTime(m_spellInfo, hitInfo.AuraDuration, this);
+                        else if (m_spellInfo->HasAttribute(SPELL_ATTR5_HASTE_AFFECT_DURATION))
+                        {
+                            int32 origDuration = hitInfo.AuraDuration;
+                            hitInfo.AuraDuration = 0;
+                            for (AuraEffect const* auraEff : _spellAura->GetAuraEffects())
+                                if (auraEff)
+                                    if (int32 period = auraEff->GetPeriod())  // period is hastened by UNIT_MOD_CAST_SPEED
+                                        hitInfo.AuraDuration = std::max(std::max(origDuration / period, 1) * period, hitInfo.AuraDuration);
+
+                            // if there is no periodic effect
+                            if (!hitInfo.AuraDuration)
+                                hitInfo.AuraDuration = int32(origDuration * m_originalCaster->m_unitData->ModCastingSpeed);
+                        }
+                    }
+
+                    if (hitInfo.AuraDuration != _spellAura->GetMaxDuration())
+                    {
+                        _spellAura->SetMaxDuration(hitInfo.AuraDuration);
+                        _spellAura->SetDuration(hitInfo.AuraDuration);
+                    }
+                }
             }
             else
                 _spellAura->AddStaticApplication(unit, aura_effmask);
-
-            if (_spellAura)
-            {
-                // Set aura stack amount to desired value
-                if (m_spellValue->AuraStackAmount > 1)
-                {
-                    if (!refresh)
-                        _spellAura->SetStackAmount(m_spellValue->AuraStackAmount);
-                    else
-                        _spellAura->ModStackAmount(m_spellValue->AuraStackAmount);
-                }
-
-                _spellAura->SetDiminishGroup(hitInfo.DRGroup);
-
-                hitInfo.AuraDuration = caster->ModSpellDuration(m_spellInfo, unit, hitInfo.AuraDuration, hitInfo.Positive, _spellAura->GetEffectMask());
-
-                if (hitInfo.AuraDuration > 0)
-                {
-                    hitInfo.AuraDuration *= m_spellValue->DurationMul;
-
-                    // Haste modifies duration of channeled spells
-                    if (m_spellInfo->IsChanneled())
-                        caster->ModSpellDurationTime(m_spellInfo, hitInfo.AuraDuration, this);
-                    else if (m_spellInfo->HasAttribute(SPELL_ATTR5_HASTE_AFFECT_DURATION))
-                    {
-                        int32 origDuration = hitInfo.AuraDuration;
-                        hitInfo.AuraDuration = 0;
-                        for (AuraEffect const* auraEff : _spellAura->GetAuraEffects())
-                            if (auraEff)
-                                if (int32 period = auraEff->GetPeriod())  // period is hastened by UNIT_MOD_CAST_SPEED
-                                    hitInfo.AuraDuration = std::max(std::max(origDuration / period, 1) * period, hitInfo.AuraDuration);
-
-                        // if there is no periodic effect
-                        if (!hitInfo.AuraDuration)
-                            hitInfo.AuraDuration = int32(origDuration * m_originalCaster->m_unitData->ModCastingSpeed);
-                    }
-                }
-
-                if (hitInfo.AuraDuration != _spellAura->GetMaxDuration())
-                {
-                    _spellAura->SetMaxDuration(hitInfo.AuraDuration);
-                    _spellAura->SetDuration(hitInfo.AuraDuration);
-                }
-            }
         }
     }
 
@@ -3567,10 +3590,12 @@ void Spell::handle_immediate()
         else if (duration == -1)
             SendChannelStart(duration);
 
-        m_spellState = SPELL_STATE_CASTING;
-
-        // GameObjects shouldn't cast channeled spells
-        ASSERT_NOTNULL(m_caster->ToUnit())->AddInterruptMask(m_spellInfo->ChannelInterruptFlags, m_spellInfo->ChannelInterruptFlags2);
+        if (duration != 0)
+        {
+            m_spellState = SPELL_STATE_CASTING;
+            // GameObjects shouldn't cast channeled spells
+            ASSERT_NOTNULL(m_caster->ToUnit())->AddInterruptMask(m_spellInfo->ChannelInterruptFlags, m_spellInfo->ChannelInterruptFlags2);
+        }
     }
 
     PrepareTargetProcessing();
@@ -3649,21 +3674,19 @@ uint64 Spell::handle_delayed(uint64 t_offset)
     // now recheck units targeting correctness (need before any effects apply to prevent adding immunity at first effect not allow apply second spell effect and similar cases)
     {
         std::vector<TargetInfo> delayedTargets;
-        auto itr = std::remove_if(std::begin(m_UniqueTargetInfo), std::end(m_UniqueTargetInfo), [&](TargetInfo& target) -> bool
+        m_UniqueTargetInfo.erase(std::remove_if(m_UniqueTargetInfo.begin(), m_UniqueTargetInfo.end(), [&](TargetInfo& target) -> bool
         {
             if (single_missile || target.TimeDelay <= t_offset)
             {
                 target.TimeDelay = t_offset;
+                delayedTargets.emplace_back(std::move(target));
                 return true;
             }
             else if (next_time == 0 || target.TimeDelay < next_time)
                 next_time = target.TimeDelay;
 
             return false;
-        });
-
-        delayedTargets.insert(delayedTargets.end(), std::make_move_iterator(itr), std::make_move_iterator(m_UniqueTargetInfo.end()));
-        m_UniqueTargetInfo.erase(itr, m_UniqueTargetInfo.end());
+        }), m_UniqueTargetInfo.end());
 
         DoProcessTargetContainer(delayedTargets);
     }
@@ -3671,21 +3694,19 @@ uint64 Spell::handle_delayed(uint64 t_offset)
     // now recheck gameobject targeting correctness
     {
         std::vector<GOTargetInfo> delayedGOTargets;
-        auto itr = std::remove_if(std::begin(m_UniqueGOTargetInfo), std::end(m_UniqueGOTargetInfo), [&](GOTargetInfo& goTarget) -> bool
+        m_UniqueGOTargetInfo.erase(std::remove_if(m_UniqueGOTargetInfo.begin(), m_UniqueGOTargetInfo.end(), [&](GOTargetInfo& goTarget) -> bool
         {
             if (single_missile || goTarget.TimeDelay <= t_offset)
             {
                 goTarget.TimeDelay = t_offset;
+                delayedGOTargets.emplace_back(std::move(goTarget));
                 return true;
             }
             else if (next_time == 0 || goTarget.TimeDelay < next_time)
                 next_time = goTarget.TimeDelay;
 
             return false;
-        });
-
-        delayedGOTargets.insert(delayedGOTargets.end(), std::make_move_iterator(itr), std::make_move_iterator(m_UniqueGOTargetInfo.end()));
-        m_UniqueGOTargetInfo.erase(itr, m_UniqueGOTargetInfo.end());
+        }), m_UniqueGOTargetInfo.end());
 
         DoProcessTargetContainer(delayedGOTargets);
     }
@@ -4387,25 +4408,14 @@ void Spell::SendSpellGo()
     {
         castData.RemainingRunes = boost::in_place();
 
-        //TODO: There is a crash caused by a spell with CAST_FLAG_RUNE_LIST casted by a creature
-        //The creature is the mover of a player, so HandleCastSpellOpcode uses it as the caster
-        if (Player* player = m_caster->ToPlayer())
+        Player* player = ASSERT_NOTNULL(m_caster->ToPlayer());
+        castData.RemainingRunes->Start = m_runesState; // runes state before
+        castData.RemainingRunes->Count = player->GetRunesState(); // runes state after
+        for (uint8 i = 0; i < player->GetMaxPower(POWER_RUNES); ++i)
         {
-            castData.RemainingRunes->Start = m_runesState; // runes state before
-            castData.RemainingRunes->Count = player->GetRunesState(); // runes state after
-            for (uint8 i = 0; i < player->GetMaxPower(POWER_RUNES); ++i)
-            {
-                // float casts ensure the division is performed on floats as we need float result
-                float baseCd = float(player->GetRuneBaseCooldown());
-                castData.RemainingRunes->Cooldowns.push_back((baseCd - float(player->GetRuneCooldown(i))) / baseCd * 255); // rune cooldown passed
-            }
-        }
-        else
-        {
-            castData.RemainingRunes->Start = 0;
-            castData.RemainingRunes->Count = 0;
-            for (uint8 i = 0; i < player->GetMaxPower(POWER_RUNES); ++i)
-                castData.RemainingRunes->Cooldowns.push_back(0);
+            // float casts ensure the division is performed on floats as we need float result
+            float baseCd = float(player->GetRuneBaseCooldown());
+            castData.RemainingRunes->Cooldowns.push_back((baseCd - float(player->GetRuneCooldown(i))) / baseCd * 255); // rune cooldown passed
         }
     }
 
@@ -7296,6 +7306,11 @@ bool Spell::CheckEffectTarget(Unit const* target, SpellEffectInfo const& spellEf
     if (m_spellInfo->HasAttribute(SPELL_ATTR2_CAN_TARGET_NOT_IN_LOS) || DisableMgr::IsDisabledFor(DISABLE_TYPE_SPELL, m_spellInfo->Id, nullptr, SPELL_DISABLE_LOS))
         return true;
 
+    // check if gameobject ignores LOS
+    if (GameObject const* gobCaster = m_caster->ToGameObject())
+        if (!gobCaster->GetGOInfo()->GetRequireLOS())
+            return true;
+
     // if spell is triggered, need to check for LOS disable on the aura triggering it and inherit that behaviour
     if (IsTriggered() && m_triggeredByAuraSpell && (m_triggeredByAuraSpell->HasAttribute(SPELL_ATTR2_CAN_TARGET_NOT_IN_LOS) || DisableMgr::IsDisabledFor(DISABLE_TYPE_SPELL, m_triggeredByAuraSpell->Id, nullptr, SPELL_DISABLE_LOS)))
         return true;
@@ -8170,13 +8185,13 @@ bool WorldObjectSpellTargetCheck::operator()(WorldObject* target) const
             case TARGET_CHECK_ENEMY:
                 if (unitTarget->IsTotem())
                     return false;
-                if (!_caster->IsValidAttackTarget(unitTarget, _spellInfo, false))
+                if (!_caster->IsValidAttackTarget(unitTarget, _spellInfo))
                     return false;
                 break;
             case TARGET_CHECK_ALLY:
                 if (unitTarget->IsTotem())
                     return false;
-                if (!_caster->IsValidAssistTarget(unitTarget, _spellInfo, false))
+                if (!_caster->IsValidAssistTarget(unitTarget, _spellInfo))
                     return false;
                 break;
             case TARGET_CHECK_PARTY:
@@ -8184,7 +8199,7 @@ bool WorldObjectSpellTargetCheck::operator()(WorldObject* target) const
                     return false;
                 if (unitTarget->IsTotem())
                     return false;
-                if (!_caster->IsValidAssistTarget(unitTarget, _spellInfo, false))
+                if (!_caster->IsValidAssistTarget(unitTarget, _spellInfo))
                     return false;
                 if (!refUnit->IsInPartyWith(unitTarget))
                     return false;
@@ -8200,7 +8215,7 @@ bool WorldObjectSpellTargetCheck::operator()(WorldObject* target) const
                     return false;
                 if (unitTarget->IsTotem())
                     return false;
-                if (!_caster->IsValidAssistTarget(unitTarget, _spellInfo, false))
+                if (!_caster->IsValidAssistTarget(unitTarget, _spellInfo))
                     return false;
                 if (!refUnit->IsInRaidWith(unitTarget))
                     return false;
@@ -8234,19 +8249,6 @@ bool WorldObjectSpellTargetCheck::operator()(WorldObject* target) const
                     return false;
             default:
                 break;
-        }
-
-        // then check actual spell positivity to determine if the target is valid
-        // (negative spells may be targeted on allies)
-        if (_spellInfo->IsPositive())
-        {
-            if (!_caster->IsValidSpellAssistTarget(unitTarget, _spellInfo))
-                return false;
-        }
-        else
-        {
-            if (!_caster->IsValidSpellAttackTarget(unitTarget, _spellInfo))
-                return false;
         }
     }
 
