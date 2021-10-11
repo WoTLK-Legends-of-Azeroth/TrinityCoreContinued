@@ -1555,7 +1555,7 @@ void SmartScript::ProcessAction(SmartScriptHolder& e, Unit* unit, uint32 var0, u
 
                     for (uint32 i = 0; i < MAX_EQUIPMENT_ITEMS; ++i)
                         if (!e.action.equip.mask || (e.action.equip.mask & (1 << i)))
-                            npc->SetVirtualItem(0, slot[i].ItemId, slot[i].AppearanceModId, slot[i].ItemVisual);
+                            npc->SetVirtualItem(i, slot[i].ItemId, slot[i].AppearanceModId, slot[i].ItemVisual);
                 }
             }
             break;
@@ -2433,7 +2433,7 @@ void SmartScript::ProcessAction(SmartScriptHolder& e, Unit* unit, uint32 var0, u
                 if (Player* playerTarget = target->ToPlayer())
                 {
                     Conversation* conversation = Conversation::CreateConversation(e.action.conversation.id, playerTarget,
-                        *playerTarget, { playerTarget->GetGUID() }, nullptr);
+                        *playerTarget, playerTarget->GetGUID(), nullptr);
                     if (!conversation)
                         TC_LOG_WARN("scripts.ai", "SmartScript::ProcessAction:: SMART_ACTION_CREATE_CONVERSATION: id %u, baseObject %s, target %s - failed to create conversation",
                             e.action.conversation.id, !baseObject ? "" : baseObject->GetName().c_str(), playerTarget->GetName().c_str());
