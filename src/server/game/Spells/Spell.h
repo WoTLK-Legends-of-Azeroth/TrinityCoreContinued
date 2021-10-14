@@ -247,6 +247,7 @@ class TC_GAME_API Spell
         void EffectInstaKill();
         void EffectDummy();
         void EffectTeleportUnits();
+        void EffectTeleportUnitsWithVisualLoadingScreen();
         void EffectApplyAura();
         void EffectSendEvent();
         void EffectPowerBurn();
@@ -371,6 +372,7 @@ class TC_GAME_API Spell
         void EffectLearnGarrisonBuilding();
         void EffectCreateGarrison();
         void EffectCreateConversation();
+        void EffectCancelConversation();
         void EffectAddGarrisonFollower();
         void EffectActivateGarrisonBuilding();
         void EffectHealBattlePetPct();
@@ -385,6 +387,8 @@ class TC_GAME_API Spell
         void EffectGiveArtifactPower();
         void EffectGiveArtifactPowerNoBonus();
         void EffectPlaySceneScriptPackage();
+        void EffectCreateSceneObject();
+        void EffectCreatePrivateSceneObject();
         void EffectPlayScene();
         void EffectGiveHonor();
         void EffectLearnTransmogSet();
