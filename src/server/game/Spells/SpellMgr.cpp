@@ -1618,7 +1618,8 @@ void SpellMgr::LoadSpellProcs()
                         if (!spellEffectInfo.IsAura())
                             continue;
 
-                        if (spellEffectInfo.ApplyAuraName == SPELL_AURA_ADD_PCT_MODIFIER || spellEffectInfo.ApplyAuraName == SPELL_AURA_ADD_FLAT_MODIFIER)
+                        if (spellEffectInfo.ApplyAuraName == SPELL_AURA_ADD_PCT_MODIFIER || spellEffectInfo.ApplyAuraName == SPELL_AURA_ADD_FLAT_MODIFIER
+                            || spellEffectInfo.ApplyAuraName == SPELL_AURA_ADD_PCT_MODIFIER_BY_SPELL_LABEL || spellEffectInfo.ApplyAuraName == SPELL_AURA_ADD_FLAT_MODIFIER_BY_SPELL_LABEL)
                         {
                             found = true;
                             break;
@@ -2533,7 +2534,7 @@ void SpellMgr::LoadSpellInfoStore()
         loadData[{ interrupts->SpellID, Difficulty(interrupts->DifficultyID) }].Interrupts = interrupts;
 
     for (SpellLabelEntry const* label : sSpellLabelStore)
-        loadData[{ label->LabelID, DIFFICULTY_NONE }].Labels.push_back(label);
+        loadData[{ label->SpellID, DIFFICULTY_NONE }].Labels.push_back(label);
 
     for (SpellLevelsEntry const* levels : sSpellLevelsStore)
         loadData[{ levels->SpellID, Difficulty(levels->DifficultyID) }].Levels = levels;
