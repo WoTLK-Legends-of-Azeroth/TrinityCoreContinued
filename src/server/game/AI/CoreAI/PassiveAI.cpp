@@ -18,9 +18,9 @@
 #include "PassiveAI.h"
 #include "Creature.h"
 
-PassiveAI::PassiveAI(Creature* c) : CreatureAI(c) { me->SetReactState(REACT_PASSIVE); }
-PossessedAI::PossessedAI(Creature* c) : CreatureAI(c) { me->SetReactState(REACT_PASSIVE); }
-NullCreatureAI::NullCreatureAI(Creature* c) : CreatureAI(c) { me->SetReactState(REACT_PASSIVE); }
+PassiveAI::PassiveAI(Creature* c, uint32 scriptId) : CreatureAI(c, scriptId) { me->SetReactState(REACT_PASSIVE); }
+PossessedAI::PossessedAI(Creature* c, uint32 scriptId) : CreatureAI(c, scriptId) { me->SetReactState(REACT_PASSIVE); }
+NullCreatureAI::NullCreatureAI(Creature* c, uint32 scriptId) : CreatureAI(c, scriptId) { me->SetReactState(REACT_PASSIVE); }
 
 int32 NullCreatureAI::Permissible(Creature const* creature)
 {
@@ -66,12 +66,6 @@ void PossessedAI::KilledUnit(Unit* victim)
     // We killed a creature, disable victim's loot
     if (victim->GetTypeId() == TYPEID_UNIT)
         me->RemoveDynamicFlag(UNIT_DYNFLAG_LOOTABLE);
-}
-
-void PossessedAI::OnCharmed(bool /*apply*/)
-{
-    me->NeedChangeAI = true;
-    me->IsAIEnabled = false;
 }
 
 void CritterAI::DamageTaken(Unit* /*done_by*/, uint32&)
