@@ -46,19 +46,20 @@ public:
     {
         static std::vector<ChatCommand> goCommandTable =
         {
-            { "creature",           rbac::RBAC_PERM_COMMAND_GO_CREATURE,            false, &HandleGoCreatureCommand,                    "" },
-            { "graveyard",          rbac::RBAC_PERM_COMMAND_GO_GRAVEYARD,           false, &HandleGoGraveyardCommand,                   "" },
-            { "grid",               rbac::RBAC_PERM_COMMAND_GO_GRID,                false, &HandleGoGridCommand,                        "" },
-            { "object",             rbac::RBAC_PERM_COMMAND_GO_OBJECT,              false, &HandleGoObjectCommand,                      "" },
-            { "quest",              rbac::RBAC_PERM_COMMAND_GO_QUEST,               false, &HandleGoQuestCommand,                       "" },
-            { "taxinode",           rbac::RBAC_PERM_COMMAND_GO_TAXINODE,            false, &HandleGoTaxinodeCommand,                    "" },
-            { "trigger",            rbac::RBAC_PERM_COMMAND_GO_TRIGGER,             false, &HandleGoTriggerCommand,                     "" },
-            { "zonexy",             rbac::RBAC_PERM_COMMAND_GO_ZONEXY,              false, &HandleGoZoneXYCommand,                      "" },
-            { "xyz",                rbac::RBAC_PERM_COMMAND_GO_XYZ,                 false, &HandleGoXYZCommand,                         "" },
-            { "bugticket",          rbac::RBAC_PERM_COMMAND_GO_BUG_TICKET,          false, &HandleGoTicketCommand<BugTicket>,           "" },
-            { "complaintticket",    rbac::RBAC_PERM_COMMAND_GO_COMPLAINT_TICKET,    false, &HandleGoTicketCommand<ComplaintTicket>,     "" },
-            { "suggestionticket",   rbac::RBAC_PERM_COMMAND_GO_SUGGESTION_TICKET,   false, &HandleGoTicketCommand<SuggestionTicket>,    "" },
-            { "offset",             rbac::RBAC_PERM_COMMAND_GO_OFFSET,              false, &HandleGoOffsetCommand,                      "" },
+            { "creature",           rbac::RBAC_PERM_COMMAND_GO,             false, &HandleGoCreatureCommand,                    "" },
+            { "graveyard",          rbac::RBAC_PERM_COMMAND_GO,             false, &HandleGoGraveyardCommand,                   "" },
+            { "grid",               rbac::RBAC_PERM_COMMAND_GO,             false, &HandleGoGridCommand,                        "" },
+            { "object",             rbac::RBAC_PERM_COMMAND_GO,             false, &HandleGoObjectCommand,                      "" },
+            { "quest",              rbac::RBAC_PERM_COMMAND_GO,             false, &HandleGoQuestCommand,                       "" },
+            { "taxinode",           rbac::RBAC_PERM_COMMAND_GO,             false, &HandleGoTaxinodeCommand,                    "" },
+            { "trigger",            rbac::RBAC_PERM_COMMAND_GO,             false, &HandleGoTriggerCommand,                     "" },
+            { "zonexy",             rbac::RBAC_PERM_COMMAND_GO,             false, &HandleGoZoneXYCommand,                      "" },
+            { "xyz",                rbac::RBAC_PERM_COMMAND_GO,             false, &HandleGoXYZCommand,                         "" },
+            { "bugticket",          rbac::RBAC_PERM_COMMAND_GO,             false, &HandleGoTicketCommand<BugTicket>,           "" },
+            { "complaintticket",    rbac::RBAC_PERM_COMMAND_GO,             false, &HandleGoTicketCommand<ComplaintTicket>,     "" },
+            { "suggestionticket",   rbac::RBAC_PERM_COMMAND_GO,             false, &HandleGoTicketCommand<SuggestionTicket>,    "" },
+            { "offset",             rbac::RBAC_PERM_COMMAND_GO,             false, &HandleGoOffsetCommand,                      "" },
+            { "instance",           rbac::RBAC_PERM_COMMAND_GO,             false, &HandleGoInstanceCommand,                    "" }
         };
 
         static std::vector<ChatCommand> commandTable =
@@ -627,6 +628,101 @@ public:
 
         player->TeleportTo(player->GetMapId(), x, y, z, o);
         return true;
+    }
+
+    static bool HandleGoInstanceCommand(ChatHandler* handler, char const* args)
+    {
+        if (!*args)
+            return false;
+
+        char* pos = const_cast<char*>(args);
+        do *pos = tolower(*pos);
+        while (*(++pos));
+
+        Tokenizer labels(args, ' ');
+        uint32 mapid = 0;
+        if (labels.size() == 1)
+        {
+            try { mapid = std::stoi(labels[0]); }
+            catch (...) {}
+        }
+
+        if (!mapid)
+        {
+            std::multimap<uint32, std::pair<uint32, std::string>> matches;
+            for (auto const& pair : sObjectMgr->GetInstanceTemplates())
+            {
+                uint32 count = 0;
+                std::string const& scriptName = sObjectMgr->GetScriptName(pair.second.ScriptId);
+                for (char const* label : labels)
+                    if (scriptName.find(label) != std::string::npos)
+                        ++count;
+
+                if (count)
+                    matches.emplace(count, decltype(matches)::mapped_type({ pair.first, scriptName }));
+            }
+            if (matches.empty())
+            {
+                handler->SendSysMessage(LANG_COMMAND_NO_INSTANCES_MATCH);
+                return false;
+            }
+            auto it = matches.rbegin();
+            uint32 maxCount = it->first;
+            mapid = it->second.first;
+            if (++it != matches.rend() && it->first == maxCount)
+            {
+                handler->SendSysMessage(LANG_COMMAND_MULTIPLE_INSTANCES_MATCH);
+                --it;
+                do
+                    handler->PSendSysMessage(LANG_COMMAND_MULTIPLE_INSTANCES_ENTRY, it->second.first, it->second.second.c_str());
+                while (++it != matches.rend() && it->first == maxCount);
+                handler->SetSentErrorMessage(true);
+                return false;
+            }
+        }
+
+        ASSERT(mapid);
+
+        InstanceTemplate const* temp = sObjectMgr->GetInstanceTemplate(mapid);
+        if (!temp)
+        {
+            handler->PSendSysMessage(LANG_COMMAND_MAP_NOT_INSTANCE, mapid);
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
+        std::string const& scriptname = sObjectMgr->GetScriptName(temp->ScriptId);
+
+        Player* player = handler->GetSession()->GetPlayer();
+        if (player->IsInFlight())
+            player->FinishTaxiFlight();
+        else
+            player->SaveRecallPosition();
+
+        // try going to entrance
+        AreaTriggerStruct const* exit = sObjectMgr->GetGoBackTrigger(mapid);
+        if (!exit)
+            handler->PSendSysMessage(LANG_COMMAND_INSTANCE_NO_EXIT, mapid, scriptname.c_str());
+
+        if (exit && player->TeleportTo(exit->target_mapId, exit->target_X, exit->target_Y, exit->target_Z, exit->target_Orientation + M_PI))
+        {
+            handler->PSendSysMessage(LANG_COMMAND_WENT_TO_INSTANCE_GATE, mapid, scriptname.c_str());
+            return true;
+        }
+
+        // try going to start
+        AreaTriggerStruct const* entrance = sObjectMgr->GetMapEntranceTrigger(mapid);
+        if (!entrance)
+            handler->PSendSysMessage(LANG_COMMAND_INSTANCE_NO_ENTRANCE, mapid, scriptname.c_str());
+
+        if (entrance && player->TeleportTo(entrance->target_mapId, entrance->target_X, entrance->target_Y, entrance->target_Z, entrance->target_Orientation))
+        {
+            handler->PSendSysMessage(LANG_COMMAND_WENT_TO_INSTANCE_START, mapid, scriptname.c_str());
+            return true;
+        }
+
+        handler->PSendSysMessage(LANG_COMMAND_GO_INSTANCE_FAILED, mapid, scriptname.c_str(), exit->target_mapId);
+        handler->SetSentErrorMessage(true);
+        return false;
     }
 };
 
