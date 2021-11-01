@@ -17,7 +17,6 @@
 
 #include "ChatCommandArgs.h"
 #include "ChatCommand.h"
-#include "ChatCommandHyperlinks.h"
 #include "DB2Stores.h"
 #include "ObjectMgr.h"
 
@@ -26,7 +25,7 @@ using namespace Trinity::ChatCommands;
 struct AchievementVisitor
 {
     using value_type = AchievementEntry const*;
-    value_type operator()(Hyperlink<achievement> achData) const { return achData->achievement; }
+    value_type operator()(Hyperlink<achievement> achData) const { return achData->Achievement; }
     value_type operator()(uint32 achId) const { return sAchievementStore.LookupEntry(achId); }
 };
 char const* Trinity::ChatCommands::ArgInfo<AchievementEntry const*>::TryConsume(AchievementEntry const*& data, char const* args)
@@ -34,6 +33,20 @@ char const* Trinity::ChatCommands::ArgInfo<AchievementEntry const*>::TryConsume(
     Variant <Hyperlink<achievement>, uint32> val;
     if ((args = CommandArgsConsumerSingle<decltype(val)>::TryConsumeTo(val, args)))
         data = boost::apply_visitor(AchievementVisitor(), val);
+    return args;
+}
+
+struct CurrencyTypesVisitor
+{
+    using value_type = CurrencyTypesEntry const*;
+    value_type operator()(Hyperlink<currency> currency) const { return currency->Currency; }
+    value_type operator()(uint32 currencyId) const { return sCurrencyTypesStore.LookupEntry(currencyId); }
+};
+char const* Trinity::ChatCommands::ArgInfo<CurrencyTypesEntry const*>::TryConsume(CurrencyTypesEntry const*& data, char const* args)
+{
+    Variant <Hyperlink<currency>, uint32> val;
+    if ((args = CommandArgsConsumerSingle<decltype(val)>::TryConsumeTo(val, args)))
+        data = boost::apply_visitor(CurrencyTypesVisitor(), val);
     return args;
 }
 

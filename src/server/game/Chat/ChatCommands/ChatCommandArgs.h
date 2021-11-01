@@ -20,12 +20,13 @@
 
 #include "ChatCommandHelpers.h"
 #include "ChatCommandTags.h"
-#include "ChatCommandHyperlinks.h"
 
 struct GameTele;
 
-namespace Trinity {
-namespace ChatCommands {
+namespace Trinity
+{
+namespace ChatCommands
+{
 
 /************************** ARGUMENT HANDLERS *******************************************\
 |* Define how to extract contents of a certain requested type from a string             *|
@@ -115,6 +116,13 @@ struct TC_GAME_API ArgInfo<AchievementEntry const*>
     static char const* TryConsume(AchievementEntry const*&, char const*);
 };
 
+// CurrencyTypesEntry* from numeric id or link
+template <>
+struct TC_GAME_API ArgInfo<CurrencyTypesEntry const*>
+{
+    static char const* TryConsume(CurrencyTypesEntry const*&, char const*);
+};
+
 // GameTele* from string name or link
 template <>
 struct TC_GAME_API ArgInfo<GameTele const*>
@@ -129,6 +137,7 @@ struct TC_GAME_API ArgInfo<bool>
     static char const* TryConsume(bool&, char const*);
 };
 
-}}
+}
+}
 
 #endif
