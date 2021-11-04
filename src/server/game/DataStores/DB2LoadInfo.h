@@ -139,9 +139,9 @@ struct AnimationDataLoadInfo
         static DB2FieldMeta const fields[] =
         {
             { false, FT_INT, "ID" },
-            { false, FT_SHORT, "BehaviorID" },
+            { false, FT_SHORT, "Fallback" },
             { false, FT_BYTE, "BehaviorTier" },
-            { true, FT_INT, "Fallback" },
+            { true, FT_INT, "BehaviorID" },
             { true, FT_INT, "Flags1" },
             { true, FT_INT, "Flags2" },
         };
@@ -876,8 +876,8 @@ struct BroadcastTextLoadInfo
             { false, FT_SHORT, "EmotesID" },
             { false, FT_BYTE, "Flags" },
             { false, FT_INT, "ChatBubbleDurationMs" },
-            { false, FT_INT, "SoundEntriesID1" },
-            { false, FT_INT, "SoundEntriesID2" },
+            { false, FT_INT, "SoundKitID1" },
+            { false, FT_INT, "SoundKitID2" },
             { false, FT_SHORT, "EmoteID1" },
             { false, FT_SHORT, "EmoteID2" },
             { false, FT_SHORT, "EmoteID3" },

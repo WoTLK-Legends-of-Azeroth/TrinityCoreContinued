@@ -66,7 +66,7 @@ void HotfixDatabaseConnection::DoPrepareStatements()
         " WHERE (`VerifiedBuild` > 0) = ? AND locale = ?", CONNECTION_SYNCH);
 
     // AnimationData.db2
-    PrepareStatement(HOTFIX_SEL_ANIMATION_DATA, "SELECT ID, BehaviorID, BehaviorTier, Fallback, Flags1, Flags2 FROM animation_data"
+    PrepareStatement(HOTFIX_SEL_ANIMATION_DATA, "SELECT ID, Fallback, BehaviorTier, BehaviorID, Flags1, Flags2 FROM animation_data"
         " WHERE (`VerifiedBuild` > 0) = ?", CONNECTION_SYNCH);
     PREPARE_MAX_ID_STMT(HOTFIX_SEL_ANIMATION_DATA, "SELECT MAX(ID) + 1 FROM animation_data", CONNECTION_SYNCH);
 
@@ -270,7 +270,7 @@ void HotfixDatabaseConnection::DoPrepareStatements()
 
     // BroadcastText.db2
     PrepareStatement(HOTFIX_SEL_BROADCAST_TEXT, "SELECT Text, Text1, ID, LanguageID, ConditionID, EmotesID, Flags, ChatBubbleDurationMs, "
-        "SoundEntriesID1, SoundEntriesID2, EmoteID1, EmoteID2, EmoteID3, EmoteDelay1, EmoteDelay2, EmoteDelay3 FROM broadcast_text"
+        "SoundKitID1, SoundKitID2, EmoteID1, EmoteID2, EmoteID3, EmoteDelay1, EmoteDelay2, EmoteDelay3 FROM broadcast_text"
         " WHERE (`VerifiedBuild` > 0) = ?", CONNECTION_SYNCH);
     PREPARE_MAX_ID_STMT(HOTFIX_SEL_BROADCAST_TEXT, "SELECT MAX(ID) + 1 FROM broadcast_text", CONNECTION_SYNCH);
     PREPARE_LOCALE_STMT(HOTFIX_SEL_BROADCAST_TEXT, "SELECT ID, Text_lang, Text1_lang FROM broadcast_text_locale WHERE (`VerifiedBuild` > 0) = ?"

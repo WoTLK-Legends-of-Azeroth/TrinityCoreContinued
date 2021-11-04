@@ -101,9 +101,9 @@ struct AdventureMapPOIEntry
 struct AnimationDataEntry
 {
     uint32 ID;
-    uint16 BehaviorID;
+    uint16 Fallback;
     uint8 BehaviorTier;
-    int32 Fallback;
+    int32 BehaviorID;
     int32 Flags[2];
 };
 
@@ -527,7 +527,7 @@ struct BroadcastTextEntry
     uint16 EmotesID;
     uint8 Flags;
     uint32 ChatBubbleDurationMs;
-    uint32 SoundEntriesID[2];
+    uint32 SoundKitID[2];
     uint16 EmoteID[MAX_BROADCAST_TEXT_EMOTES];
     uint16 EmoteDelay[MAX_BROADCAST_TEXT_EMOTES];
 };
