@@ -4706,6 +4706,7 @@ void ObjectMgr::LoadQuests()
                     break;
                 case QUEST_OBJECTIVE_MONEY:
                 case QUEST_OBJECTIVE_WINPVPPETBATTLES:
+                case QUEST_OBJECTIVE_PROGRESS_BAR:
                     break;
                 default:
                     TC_LOG_ERROR("sql.sql", "Quest %u objective %u has unhandled type %u", qinfo->GetQuestId(), obj.ID, obj.Type);
@@ -6045,21 +6046,23 @@ void ObjectMgr::LoadNPCText()
             npcText.Data[i].BroadcastTextID  = fields[9 + i].GetUInt32();
         }
 
+        std::bitset<MAX_NPC_TEXT_OPTIONS> erasedBroadcastTexts;
         for (uint8 i = 0; i < MAX_NPC_TEXT_OPTIONS; i++)
         {
             if (npcText.Data[i].BroadcastTextID)
             {
                 if (!sBroadcastTextStore.LookupEntry(npcText.Data[i].BroadcastTextID))
                 {
-                    TC_LOG_ERROR("sql.sql", "NPCText (ID: %u) has a non-existing or incompatible BroadcastText (ID: %u, Index: %u)", textID, npcText.Data[i].BroadcastTextID, i);
+                    TC_LOG_ERROR("sql.sql", "NPCText (ID: %u) has a non-existing BroadcastText (ID: %u, Index: %u)", textID, npcText.Data[i].BroadcastTextID, i);
                     npcText.Data[i].BroadcastTextID = 0;
+                    erasedBroadcastTexts[i] = true;
                 }
             }
         }
 
         for (uint8 i = 0; i < MAX_NPC_TEXT_OPTIONS; i++)
         {
-            if (npcText.Data[i].Probability > 0 && npcText.Data[i].BroadcastTextID == 0)
+            if (npcText.Data[i].Probability > 0 && npcText.Data[i].BroadcastTextID == 0 && !erasedBroadcastTexts[i])
             {
                 TC_LOG_ERROR("sql.sql", "NPCText (ID: %u) has a probability (Index: %u) set, but no BroadcastTextID to go with it", textID, i);
                 npcText.Data[i].Probability = 0;
@@ -7254,7 +7257,7 @@ inline void CheckGOLinkedTrapId(GameObjectTemplate const* goInfo, uint32 dataN, 
     {
         if (trapInfo->type != GAMEOBJECT_TYPE_TRAP)
             TC_LOG_ERROR("sql.sql", "Gameobject (Entry: %u GoType: %u) have data%d=%u but GO (Entry %u) have not GAMEOBJECT_TYPE_TRAP (%u) type.",
-            goInfo->entry, goInfo->type, N, dataN, dataN, GAMEOBJECT_TYPE_TRAP);
+            goInfo->entry, goInfo->type, N, dataN, dataN, uint32(GAMEOBJECT_TYPE_TRAP));
     }
 }
 
