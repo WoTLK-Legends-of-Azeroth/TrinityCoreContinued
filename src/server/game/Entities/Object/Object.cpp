@@ -52,6 +52,7 @@
 #include "World.h"
 #include "WorldSession.h"
 #include <G3D/Vector3.h>
+#include <sstream>
 
 constexpr float VisibilityDistances[AsUnderlyingType(VisibilityDistanceType::Max)] =
 {
@@ -745,6 +746,13 @@ void Object::BuildFieldsUpdate(Player* player, UpdateDataMapType& data_map) cons
     }
 
     BuildValuesUpdateBlockForPlayer(&iter->second, iter->first);
+}
+
+std::string Object::GetDebugInfo() const
+{
+    std::stringstream sstr;
+    sstr << GetGUID().ToString() + " Entry " << GetEntry();
+    return sstr.str();
 }
 
 void MovementInfo::OutDebug()
@@ -1703,7 +1711,7 @@ TempSummon* Map::SummonCreature(uint32 entry, Position const& pos, SummonPropert
                     mask = UNIT_MASK_MINION;
                     break;
                 default:
-                    if (properties->Flags & 512) // Mirror Image, Summon Gargoyle
+                    if (properties->GetFlags().HasFlag(SummonPropertiesFlags::JoinSummonerSpawnGroup))
                         mask = UNIT_MASK_GUARDIAN;
                     break;
                 }
@@ -1740,8 +1748,7 @@ TempSummon* Map::SummonCreature(uint32 entry, Position const& pos, SummonPropert
         return nullptr;
     }
 
-    // Set the summon to the summoner's phase
-    if (summoner)
+    if (summoner && !(properties && properties->GetFlags().HasFlag(SummonPropertiesFlags::IgnoreSummonerPhase)))
         PhasingHandler::InheritPhaseShift(summon, summoner);
 
     summon->SetCreatedBySpell(spellId);
@@ -3271,6 +3278,15 @@ float WorldObject::GetMapHeight(float x, float y, float z, bool vmap/* = true*/,
         z += GetCollisionHeight();
 
     return GetMap()->GetHeight(GetPhaseShift(), x, y, z, vmap, distanceToSearch);
+}
+
+std::string WorldObject::GetDebugInfo() const
+{
+    std::stringstream sstr;
+    sstr << WorldLocation::GetDebugInfo() << "\n"
+         << Object::GetDebugInfo() << "\n"
+         << "Name: " << GetName();
+    return sstr.str();
 }
 
 template TC_GAME_API void WorldObject::GetGameObjectListWithEntryInGrid(std::list<GameObject*>&, uint32, float) const;
