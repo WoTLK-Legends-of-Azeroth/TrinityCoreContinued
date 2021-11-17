@@ -1833,6 +1833,8 @@ class TC_GAME_API Unit : public WorldObject
         uint16 GetVirtualItemAppearanceMod(uint32 slot) const;
         void SetVirtualItem(uint32 slot, uint32 itemId, uint16 appearanceModId = 0, uint16 itemVisual = 0);
 
+        std::string GetDebugInfo() const override;
+
         UF::UpdateField<UF::UnitData, 0, TYPEID_UNIT> m_unitData;
 
     protected:
@@ -1968,7 +1970,9 @@ class TC_GAME_API Unit : public WorldObject
 
         void UpdateCharmAI();
         void RestoreDisabledAI();
-        std::unique_ptr<UnitAI> i_AI, i_disabledAI;
+        std::unique_ptr<UnitAI> i_AI;
+        std::unique_ptr<UnitAI> i_disabledAI;
+        std::unique_ptr<UnitAI> i_lockedAILifetimeExtension; // yes, this lifetime extension is terrible
         bool m_aiLocked;
 
         std::unordered_set<AbstractFollower*> m_followingMe;
