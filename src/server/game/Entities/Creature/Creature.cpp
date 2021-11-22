@@ -674,13 +674,13 @@ bool Creature::UpdateEntry(uint32 entry, CreatureData const* data /*= nullptr*/,
 
     UpdateMovementFlags();
     LoadCreaturesAddon();
-  
+
     LoadTemplateImmunities();
     GetThreatManager().EvaluateSuppressed();
-  
+
     //We must update last scriptId or it looks like we reloaded a script, breaking some things such as gossip temporarily
     LastUsedScriptID = GetScriptId();
-  
+
     return true;
 }
 
@@ -1005,7 +1005,8 @@ void Creature::DoFleeToGetAssistance()
 
 bool Creature::AIM_Destroy()
 {
-    SetAI(nullptr);
+    PopAI();
+    RefreshAI();
     return true;
 }
 
