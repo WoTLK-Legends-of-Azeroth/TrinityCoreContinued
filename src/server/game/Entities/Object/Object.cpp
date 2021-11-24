@@ -2385,9 +2385,9 @@ FactionTemplateEntry const* WorldObject::GetFactionTemplateEntry() const
         if (Player const* player = ToPlayer())
             TC_LOG_ERROR("entities", "Player %s has invalid faction (faction template id) #%u", player->GetName().c_str(), GetFaction());
         else if (Creature const* creature = ToCreature())
-            TC_LOG_ERROR("entities", "Creature (template id: %u) has invalid faction (faction template id) #%u", creature->GetCreatureTemplate()->Entry, GetFaction());
+            TC_LOG_ERROR("entities.unit.badfaction", "Creature (template id: %u) has invalid faction (faction template id) #%u", creature->GetCreatureTemplate()->Entry, GetFaction());
         else if (GameObject const* go = ToGameObject())
-            TC_LOG_ERROR("entities", "GameObject (template id: %u) has invalid faction (faction template id) #%u", go->GetGOInfo()->entry, GetFaction());
+            TC_LOG_ERROR("entities.gameobject.badfaction", "GameObject (template id: %u) has invalid faction (faction template id) #%u", go->GetGOInfo()->entry, GetFaction());
         else
             TC_LOG_ERROR("entities", "WorldObject (name: %s, type: %u) has invalid faction (faction template id) #%u", GetName().c_str(), uint32(GetTypeId()), GetFaction());
     }
@@ -3056,6 +3056,8 @@ void WorldObject::MovePositionToFirstCollision(Position &pos, float dist, float 
         destx, desty, destz + halfHeight,
         destx, desty, destz, -0.5f);
 
+    destz -= halfHeight;
+
     // collision occured
     if (col)
     {
@@ -3070,6 +3072,8 @@ void WorldObject::MovePositionToFirstCollision(Position &pos, float dist, float 
         pos.m_positionX, pos.m_positionY, pos.m_positionZ + halfHeight,
         destx, desty, destz + halfHeight,
         destx, desty, destz, -0.5f);
+
+    destz -= halfHeight;
 
     // Collided with a gameobject
     if (col)
