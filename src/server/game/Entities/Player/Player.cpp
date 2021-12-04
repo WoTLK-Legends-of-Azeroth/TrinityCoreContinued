@@ -5853,9 +5853,6 @@ void Player::SetSkill(uint16 id, uint16 step, uint16 newVal, uint16 maxVal)
 
         if (newVal)
         {
-            UpdateCriteria(CriteriaType::SkillRaised, id);
-            UpdateCriteria(CriteriaType::AchieveSkillStep, id);
-
             // temporary bonuses
             for (AuraEffect* effect : GetAuraEffectsByType(SPELL_AURA_MOD_SKILL))
                 if (effect->GetMiscValue() == int32(id))
@@ -5872,6 +5869,8 @@ void Player::SetSkill(uint16 id, uint16 step, uint16 newVal, uint16 maxVal)
 
             // Learn all spells for skill
             LearnSkillRewardedSpells(id, newVal);
+            UpdateCriteria(CriteriaType::SkillRaised, id);
+            UpdateCriteria(CriteriaType::AchieveSkillStep, id);
         }
     }
 }
@@ -12050,7 +12049,7 @@ Item* Player::StoreNewItem(ItemPosCountVec const& pos, uint32 itemId, bool updat
     {
         ItemAddedQuestCheck(itemId, count);
         UpdateCriteria(CriteriaType::ObtainAnyItem, itemId, count);
-        UpdateCriteria(CriteriaType::AcquireItem, itemId, 1);
+        UpdateCriteria(CriteriaType::AcquireItem, itemId, count);
 
         item->AddItemFlag(ITEM_FIELD_FLAG_NEW_ITEM);
 
@@ -26006,9 +26005,6 @@ int32 Player::NextGroupUpdateSequenceNumber(GroupCategory category)
 
 void Player::ProcessTerrainStatusUpdate(ZLiquidStatus status, Optional<LiquidData> const& liquidData)
 {
-    if (IsFlying())
-        return;
-
     // process liquid auras using generic unit code
     Unit::ProcessTerrainStatusUpdate(status, liquidData);
 
