@@ -35,6 +35,7 @@
 #include "InstanceScript.h"
 #include "Log.h"
 #include "LootMgr.h"
+#include "MapManager.h"
 #include "MiscPackets.h"
 #include "MotionMaster.h"
 #include "ObjectAccessor.h"
@@ -464,7 +465,7 @@ void Creature::RemoveCorpse(bool setSpawnTime, bool destroyForNearbyPlayers)
             uint32 respawnDelay = m_respawnDelay;
             m_respawnTime = std::max<time_t>(GameTime::GetGameTime() + respawnDelay, m_respawnTime);
 
-            SaveRespawnTime(0, false);
+            SaveRespawnTime();
         }
 
         if (TempSummon* summon = ToTempSummon())
@@ -518,7 +519,7 @@ bool Creature::InitEntry(uint32 entry, CreatureData const* data /*= nullptr*/)
     m_creatureInfo = cinfo;                                 // map mode related always
 
     // equal to player Race field, but creature does not have race
-    SetRace(0);
+    SetRace(RACE_NONE);
 
     // known valid are: CLASS_WARRIOR, CLASS_PALADIN, CLASS_ROGUE, CLASS_MAGE
     SetClass(uint8(cinfo->unit_class));
@@ -630,7 +631,7 @@ bool Creature::UpdateEntry(uint32 entry, CreatureData const* data /*= nullptr*/,
 
     if (updateLevel)
         SelectLevel();
-    else
+    else if (!IsGuardian())
     {
         uint32 previousHealth = GetHealth();
         UpdateLevelDependantStats(); // We still re-initialize level dependant stats on entry update
@@ -638,16 +639,20 @@ bool Creature::UpdateEntry(uint32 entry, CreatureData const* data /*= nullptr*/,
             SetHealth(previousHealth);
     }
 
-    SetMeleeDamageSchool(SpellSchools(cInfo->dmgschool));
-    SetStatFlatModifier(UNIT_MOD_RESISTANCE_HOLY, BASE_VALUE, float(cInfo->resistance[SPELL_SCHOOL_HOLY]));
-    SetStatFlatModifier(UNIT_MOD_RESISTANCE_FIRE, BASE_VALUE, float(cInfo->resistance[SPELL_SCHOOL_FIRE]));
-    SetStatFlatModifier(UNIT_MOD_RESISTANCE_NATURE, BASE_VALUE, float(cInfo->resistance[SPELL_SCHOOL_NATURE]));
-    SetStatFlatModifier(UNIT_MOD_RESISTANCE_FROST, BASE_VALUE, float(cInfo->resistance[SPELL_SCHOOL_FROST]));
-    SetStatFlatModifier(UNIT_MOD_RESISTANCE_SHADOW, BASE_VALUE, float(cInfo->resistance[SPELL_SCHOOL_SHADOW]));
-    SetStatFlatModifier(UNIT_MOD_RESISTANCE_ARCANE, BASE_VALUE, float(cInfo->resistance[SPELL_SCHOOL_ARCANE]));
+    // Do not update guardian stats here - they are handled in Guardian::InitStatsForLevel()
+    if (!IsGuardian())
+    {
+        SetMeleeDamageSchool(SpellSchools(cInfo->dmgschool));
+        SetStatFlatModifier(UNIT_MOD_RESISTANCE_HOLY,   BASE_VALUE, float(cInfo->resistance[SPELL_SCHOOL_HOLY]));
+        SetStatFlatModifier(UNIT_MOD_RESISTANCE_FIRE,   BASE_VALUE, float(cInfo->resistance[SPELL_SCHOOL_FIRE]));
+        SetStatFlatModifier(UNIT_MOD_RESISTANCE_NATURE, BASE_VALUE, float(cInfo->resistance[SPELL_SCHOOL_NATURE]));
+        SetStatFlatModifier(UNIT_MOD_RESISTANCE_FROST,  BASE_VALUE, float(cInfo->resistance[SPELL_SCHOOL_FROST]));
+        SetStatFlatModifier(UNIT_MOD_RESISTANCE_SHADOW, BASE_VALUE, float(cInfo->resistance[SPELL_SCHOOL_SHADOW]));
+        SetStatFlatModifier(UNIT_MOD_RESISTANCE_ARCANE, BASE_VALUE, float(cInfo->resistance[SPELL_SCHOOL_ARCANE]));
 
-    SetCanModifyStats(true);
-    UpdateAllStats();
+        SetCanModifyStats(true);
+        UpdateAllStats();
+    }
 
     // checked and error show at loading templates
     if (FactionTemplateEntry const* factionTemplate = sFactionTemplateStore.LookupEntry(cInfo->faction))
@@ -1756,14 +1761,32 @@ bool Creature::LoadFromDB(ObjectGuid::LowType spawnId, Map* map, bool addToMap, 
 
     if (!m_respawnTime && !map->IsSpawnGroupActive(data->spawnGroupData->groupId))
     {
-        // @todo pools need fixing! this is just a temporary crashfix, but they violate dynspawn principles
-        ASSERT(m_respawnCompatibilityMode || sPoolMgr->IsPartOfAPool<Creature>(spawnId), "Creature (SpawnID " UI64FMTD ") trying to load in inactive spawn group %s.", spawnId, data->spawnGroupData->name.c_str());
+        if (!m_respawnCompatibilityMode)
+        {
+            // @todo pools need fixing! this is just a temporary thing, but they violate dynspawn principles
+            if (!sPoolMgr->IsPartOfAPool<Creature>(spawnId))
+            {
+                TC_LOG_ERROR("entities.unit", "Creature (SpawnID " UI64FMTD ") trying to load in inactive spawn group '%s':\n%s", spawnId, data->spawnGroupData->name.c_str(), GetDebugInfo().c_str());
+                return false;
+            }
+        }
+
         m_respawnTime = GameTime::GetGameTime() + urand(4, 7);
     }
 
-    if (m_respawnTime)                          // respawn on Update
+    if (m_respawnTime)
     {
-        ASSERT(m_respawnCompatibilityMode || sPoolMgr->IsPartOfAPool<Creature>(spawnId), "Creature (SpawnID " UI64FMTD ") trying to load despite a respawn timer in progress.", spawnId);
+        if (!m_respawnCompatibilityMode)
+        {
+            // @todo same as above
+            if (!sPoolMgr->IsPartOfAPool<Creature>(spawnId))
+            {
+                TC_LOG_ERROR("entities.unit", "Creature (SpawnID " UI64FMTD ") trying to load despite a respawn timer in progress:\n%s", spawnId, GetDebugInfo().c_str());
+                return false;
+            }
+        }
+
+        // compatibility mode creatures will be respawned in ::Update()
         m_deathState = DEAD;
         if (CanFly())
         {
@@ -1870,70 +1893,79 @@ bool Creature::hasInvolvedQuest(uint32 quest_id) const
     return false;
 }
 
-void Creature::DeleteFromDB()
+/*static*/ bool Creature::DeleteFromDB(ObjectGuid::LowType spawnId)
 {
-    if (!m_spawnId)
-    {
-        TC_LOG_ERROR("entities.unit", "Trying to delete not saved %s!", GetGUID().ToString().c_str());
-        return;
-    }
+    CreatureData const* data = sObjectMgr->GetCreatureData(spawnId);
+    if (!data)
+        return false;
 
-    // remove any scheduled respawns
-    GetMap()->RemoveRespawnTime(SPAWN_TYPE_CREATURE, m_spawnId);
+    CharacterDatabaseTransaction charTrans = CharacterDatabase.BeginTransaction();
 
-    // delete data from memory
-    sObjectMgr->DeleteCreatureData(m_spawnId);
+    sMapMgr->DoForAllMapsWithMapId(data->spawnPoint.GetMapId(),
+        [spawnId, charTrans](Map* map) -> void
+        {
+            // despawn all active creatures, and remove their respawns
+            std::vector<Creature*> toUnload;
+            for (auto const& pair : Trinity::Containers::MapEqualRange(map->GetCreatureBySpawnIdStore(), spawnId))
+                toUnload.push_back(pair.second);
+            for (Creature* creature : toUnload)
+                map->AddObjectToRemoveList(creature);
+            map->RemoveRespawnTime(SPAWN_TYPE_CREATURE, spawnId, charTrans);
+        }
+    );
 
-    // delete data and all its associations from DB
+    // delete data from memory ...
+    sObjectMgr->DeleteCreatureData(spawnId);
+
+    CharacterDatabase.CommitTransaction(charTrans);
+
     WorldDatabaseTransaction trans = WorldDatabase.BeginTransaction();
 
+    // ... and the database
     WorldDatabasePreparedStatement* stmt = WorldDatabase.GetPreparedStatement(WORLD_DEL_CREATURE);
-    stmt->setUInt64(0, m_spawnId);
+    stmt->setUInt64(0, spawnId);
     trans->Append(stmt);
 
     stmt = WorldDatabase.GetPreparedStatement(WORLD_DEL_SPAWNGROUP_MEMBER);
     stmt->setUInt8(0, uint8(SPAWN_TYPE_CREATURE));
-    stmt->setUInt64(1, m_spawnId);
+    stmt->setUInt64(1, spawnId);
     trans->Append(stmt);
 
     stmt = WorldDatabase.GetPreparedStatement(WORLD_DEL_CREATURE_ADDON);
-    stmt->setUInt64(0, m_spawnId);
+    stmt->setUInt64(0, spawnId);
     trans->Append(stmt);
 
     stmt = WorldDatabase.GetPreparedStatement(WORLD_DEL_GAME_EVENT_CREATURE);
-    stmt->setUInt64(0, m_spawnId);
+    stmt->setUInt64(0, spawnId);
     trans->Append(stmt);
 
     stmt = WorldDatabase.GetPreparedStatement(WORLD_DEL_GAME_EVENT_MODEL_EQUIP);
-    stmt->setUInt64(0, m_spawnId);
+    stmt->setUInt64(0, spawnId);
     trans->Append(stmt);
 
     stmt = WorldDatabase.GetPreparedStatement(WORLD_DEL_LINKED_RESPAWN);
-    stmt->setUInt64(0, m_spawnId);
+    stmt->setUInt64(0, spawnId);
     stmt->setUInt32(1, LINKED_RESPAWN_CREATURE_TO_CREATURE);
     trans->Append(stmt);
 
     stmt = WorldDatabase.GetPreparedStatement(WORLD_DEL_LINKED_RESPAWN);
-    stmt->setUInt64(0, m_spawnId);
+    stmt->setUInt64(0, spawnId);
     stmt->setUInt32(1, LINKED_RESPAWN_CREATURE_TO_GO);
     trans->Append(stmt);
 
     stmt = WorldDatabase.GetPreparedStatement(WORLD_DEL_LINKED_RESPAWN_MASTER);
-    stmt->setUInt64(0, m_spawnId);
+    stmt->setUInt64(0, spawnId);
     stmt->setUInt32(1, LINKED_RESPAWN_CREATURE_TO_CREATURE);
     trans->Append(stmt);
 
     stmt = WorldDatabase.GetPreparedStatement(WORLD_DEL_LINKED_RESPAWN_MASTER);
-    stmt->setUInt64(0, m_spawnId);
+    stmt->setUInt64(0, spawnId);
     stmt->setUInt32(1, LINKED_RESPAWN_GO_TO_CREATURE);
     trans->Append(stmt);
 
     WorldDatabase.CommitTransaction(trans);
 
-    // then delete any active instances of the creature
-    auto const& spawnMap = GetMap()->GetCreatureBySpawnIdStore();
-    for (auto it = spawnMap.find(m_spawnId); it != spawnMap.end(); it = spawnMap.find(m_spawnId))
-        it->second->AddObjectToRemoveList();
+    return true;
 }
 
 bool Creature::IsInvisibleDueToDespawn() const
@@ -2012,39 +2044,38 @@ bool Creature::CheckNoGrayAggroConfig(uint32 playerLevel, uint32 creatureLevel) 
 
 float Creature::GetAttackDistance(Unit const* player) const
 {
-    // WoW Wiki: the minimum radius seems to be 5 yards, while the maximum range is 45 yards
-    float maxRadius = (45.0f * sWorld->getRate(RATE_CREATURE_AGGRO));
-    float minRadius = (5.0f * sWorld->getRate(RATE_CREATURE_AGGRO));
     float aggroRate = sWorld->getRate(RATE_CREATURE_AGGRO);
-    uint8 expansionMaxLevel = uint8(GetMaxLevelForExpansion(GetCreatureTemplate()->RequiredExpansion));
-
-    uint32 playerLevel = player->GetLevelForTarget(this);
-    uint32 creatureLevel = GetLevelForTarget(player);
-
-    if (aggroRate == 0.0f)
+    if (aggroRate == 0)
         return 0.0f;
+
+    // WoW Wiki: the minimum radius seems to be 5 yards, while the maximum range is 45 yards
+    float maxRadius = 45.0f * aggroRate;
+    float minRadius = 5.0f * aggroRate;
+
+    int32 expansionMaxLevel = int32(GetMaxLevelForExpansion(GetCreatureTemplate()->RequiredExpansion));
+    int32 playerLevel = player->GetLevelForTarget(this);
+    int32 creatureLevel = GetLevelForTarget(player);
+    int32 levelDifference = creatureLevel - playerLevel;
 
     // The aggro radius for creatures with equal level as the player is 20 yards.
     // The combatreach should not get taken into account for the distance so we drop it from the range (see Supremus as expample)
     float baseAggroDistance = 20.0f - GetCombatReach();
-    float aggroRadius = baseAggroDistance;
+
+    // + - 1 yard for each level difference between player and creature
+    float aggroRadius = baseAggroDistance + float(levelDifference);
 
     // detect range auras
-    if ((creatureLevel + 5) <= sWorld->getIntConfig(CONFIG_MAX_PLAYER_LEVEL))
+    if (uint32(creatureLevel + 5) <= sWorld->getIntConfig(CONFIG_MAX_PLAYER_LEVEL))
     {
         aggroRadius += GetTotalAuraModifier(SPELL_AURA_MOD_DETECT_RANGE);
-
         aggroRadius += player->GetTotalAuraModifier(SPELL_AURA_MOD_DETECTED_RANGE);
     }
 
     // The aggro range of creatures with higher levels than the total player level for the expansion should get the maxlevel treatment
     // This makes sure that creatures such as bosses wont have a bigger aggro range than the rest of the npc's
-    // The following code is used for blizzlike behavior such as skipable bosses (e.g. Commander Springvale at level 85)
+    // The following code is used for blizzlike behaviour such as skippable bosses
     if (creatureLevel > expansionMaxLevel)
-        aggroRadius += float(expansionMaxLevel) - float(playerLevel);
-    // + - 1 yard for each level difference between player and creature
-    else
-        aggroRadius += float(creatureLevel) - float(playerLevel);
+        aggroRadius = baseAggroDistance + float(expansionMaxLevel - playerLevel);
 
     // Make sure that we wont go over the total range limits
     if (aggroRadius > maxRadius)
@@ -2082,11 +2113,7 @@ void Creature::setDeathState(DeathState s)
                 m_respawnTime = GameTime::GetGameTime() + respawnDelay;
         }
 
-        // always save boss respawn time at death to prevent crash cheating
-        if (sWorld->getBoolConfig(CONFIG_SAVE_RESPAWN_TIME_IMMEDIATELY) || isWorldBoss())
-            SaveRespawnTime();
-        else if (!m_respawnCompatibilityMode)
-            SaveRespawnTime(0, false);
+        SaveRespawnTime();
 
         ReleaseFocus(nullptr, false); // remove spellcast focus
         DoNotReacquireTarget(); // cancel delayed re-target
@@ -2180,9 +2207,6 @@ void Creature::Respawn(bool force)
 
         if (getDeathState() == DEAD)
         {
-            if (m_spawnId)
-                GetMap()->RemoveRespawnTime(SPAWN_TYPE_CREATURE, m_spawnId);
-
             TC_LOG_DEBUG("entities.unit", "Respawning creature %s (%s)", GetName().c_str(), GetGUID().ToString().c_str());
             m_respawnTime = 0;
             ResetPickPocketRefillTimer();
@@ -2221,7 +2245,7 @@ void Creature::Respawn(bool force)
     else
     {
         if (m_spawnId)
-            GetMap()->RemoveRespawnTime(SPAWN_TYPE_CREATURE, m_spawnId, true);
+            GetMap()->Respawn(SPAWN_TYPE_CREATURE, m_spawnId);
     }
 
     TC_LOG_DEBUG("entities.unit", "Respawning creature %s (%s)",
@@ -2545,19 +2569,23 @@ bool Creature::_IsTargetAcceptable(Unit const* target) const
     return false;
 }
 
-void Creature::SaveRespawnTime(uint32 forceDelay, bool savetodb)
+void Creature::SaveRespawnTime(uint32 forceDelay)
 {
     if (IsSummon() || !m_spawnId || (m_creatureData && !m_creatureData->dbData))
         return;
 
     if (m_respawnCompatibilityMode)
     {
-        GetMap()->SaveRespawnTimeDB(SPAWN_TYPE_CREATURE, m_spawnId, m_respawnTime);
+        RespawnInfo ri;
+        ri.type = SPAWN_TYPE_CREATURE;
+        ri.spawnId = m_spawnId;
+        ri.respawnTime = m_respawnTime;
+        GetMap()->SaveRespawnInfoDB(ri);
         return;
     }
 
     time_t thisRespawnTime = forceDelay ? GameTime::GetGameTime() + forceDelay : m_respawnTime;
-    GetMap()->SaveRespawnTime(SPAWN_TYPE_CREATURE, m_spawnId, GetEntry(), thisRespawnTime, GetMap()->GetZoneId(GetPhaseShift(), GetHomePosition()), Trinity::ComputeGridCoord(GetHomePosition().GetPositionX(), GetHomePosition().GetPositionY()).GetId(), savetodb && m_creatureData && m_creatureData->dbData);
+    GetMap()->SaveRespawnTime(SPAWN_TYPE_CREATURE, m_spawnId, GetEntry(), thisRespawnTime, GetMap()->GetZoneId(GetPhaseShift(), GetHomePosition()), Trinity::ComputeGridCoord(GetHomePosition().GetPositionX(), GetHomePosition().GetPositionY()).GetId());
 }
 
 // this should not be called by petAI or
@@ -3367,6 +3395,13 @@ bool Creature::CanGiveExperience() const
         && !IsPet()
         && !IsTotem()
         && !(GetCreatureTemplate()->flags_extra & CREATURE_FLAG_EXTRA_NO_XP_AT_KILL);
+}
+
+bool Creature::IsEngaged() const
+{
+    if (CreatureAI const* ai = AI())
+        return ai->IsEngaged();
+    return false;
 }
 
 void Creature::AtEngage(Unit* target)
