@@ -18,7 +18,9 @@
 #include "ChannelMgr.h"
 #include "Channel.h"
 #include "ChannelPackets.h"
+#include "DatabaseEnv.h"
 #include "DB2Stores.h"
+#include "Log.h"
 #include "Player.h"
 #include "Realm.h"
 #include "World.h"
@@ -82,35 +84,79 @@ Channel* ChannelMgr::GetChannelForPlayerByGuid(ObjectGuid channelGuid, Player* p
     return nullptr;
 }
 
-Channel* ChannelMgr::GetJoinChannel(uint32 channelId, std::string const& name, AreaTableEntry const* zoneEntry /*= nullptr*/)
+Channel* ChannelMgr::GetSystemChannel(uint32 channelId, AreaTableEntry const* zoneEntry /* = nullptr */)
 {
-    if (channelId) // builtin
+    ObjectGuid channelGuid = CreateBuiltinChannelGuid(channelId, zoneEntry);
+    auto itr = _channels.find(channelGuid);
+    if (itr != _channels.end())
+        return itr->second;
+
+    Channel* newChannel = new Channel(channelGuid, channelId, _team, zoneEntry);
+    _channels[channelGuid] = newChannel;
+    return newChannel;
+}
+
+Channel* ChannelMgr::CreateCustomChannel(std::string const& name)
+{
+    std::wstring channelName;
+    if (!Utf8toWStr(name, channelName))
+        return nullptr;
+
+    wstrToLower(channelName);
+
+    Channel*& c = _customChannels[channelName];
+    if (c)
+        return nullptr;
+
+    Channel* newChannel = new Channel(CreateCustomChannelGuid(), name, _team);
+
+    if (sWorld->getBoolConfig(CONFIG_PRESERVE_CUSTOM_CHANNELS))
     {
-        ObjectGuid channelGuid = CreateBuiltinChannelGuid(channelId, zoneEntry);
-        auto itr = _channels.find(channelGuid);
-        if (itr != _channels.end())
-            return itr->second;
-
-        Channel* newChannel = new Channel(channelGuid, channelId, _team, zoneEntry);
-        _channels[channelGuid] = newChannel;
-        return newChannel;
+        CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_INS_CHANNEL);
+        stmt->setString(0, name);
+        stmt->setUInt32(1, _team);
+        CharacterDatabase.Execute(stmt);
+        TC_LOG_DEBUG("chat.system", "Channel(%s) saved in database", name.c_str());
     }
-    else // custom
+
+    c = newChannel;
+    return newChannel;
+}
+
+Channel* ChannelMgr::GetCustomChannel(std::string const& name)
+{
+    std::wstring channelName;
+    if (!Utf8toWStr(name, channelName))
+        return nullptr;
+
+    wstrToLower(channelName);
+    auto itr = _customChannels.find(channelName);
+    if (itr != _customChannels.end())
+        return itr->second;
+    else if (sWorld->getBoolConfig(CONFIG_PRESERVE_CUSTOM_CHANNELS))
     {
-        std::wstring channelName;
-        if (!Utf8toWStr(name, channelName))
-            return nullptr;
+        CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_SEL_CHANNEL);
+        stmt->setString(0, name);
+        stmt->setUInt32(1, _team);
+        if (PreparedQueryResult result = CharacterDatabase.Query(stmt))
+        {
+            Field* fields = result->Fetch();
+            std::string dbName = fields[0].GetString(); // may be different - channel names are case insensitive
+            bool dbAnnounce = fields[1].GetBool();
+            bool dbOwnership = fields[2].GetBool();
+            std::string dbPass = fields[3].GetString();
+            std::string dbBanned = fields[4].GetString();
 
-        wstrToLower(channelName);
-
-        auto itr = _customChannels.find(channelName);
-        if (itr != _customChannels.end())
-            return itr->second;
-
-        Channel* newChannel = new Channel(CreateCustomChannelGuid(), name, _team);
-        _customChannels[channelName] = newChannel;
-        return newChannel;
+            Channel* channel = new Channel(CreateCustomChannelGuid(), dbName, _team, dbBanned);
+            channel->SetAnnounce(dbAnnounce);
+            channel->SetOwnership(dbOwnership);
+            channel->SetPassword(dbPass);
+            _customChannels.emplace(channelName, channel);
+            return channel;
+        }
     }
+
+    return nullptr;
 }
 
 Channel* ChannelMgr::GetChannel(uint32 channelId, std::string const& name, Player* player, bool notify /*= true*/, AreaTableEntry const* zoneEntry /*= nullptr*/) const

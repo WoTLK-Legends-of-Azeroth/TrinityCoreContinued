@@ -471,7 +471,7 @@ bool Player::Create(ObjectGuid::LowType guidlow, WorldPackets::Character::Charac
 
     SetObjectScale(1.0f);
 
-    setFactionForRace(createInfo->Race);
+    SetFactionForRace(createInfo->Race);
 
     if (!IsValidGender(createInfo->Sex))
     {
@@ -483,7 +483,7 @@ bool Player::Create(ObjectGuid::LowType guidlow, WorldPackets::Character::Charac
     SetRace(createInfo->Race);
     SetClass(createInfo->Class);
     SetGender(Gender(createInfo->Sex));
-    SetPowerType(Powers(powertype));
+    SetPowerType(Powers(powertype), false);
     InitDisplayIds();
     UpdatePositionData();
     if (sWorld->getIntConfig(CONFIG_GAME_TYPE) == REALM_TYPE_PVP || sWorld->getIntConfig(CONFIG_GAME_TYPE) == REALM_TYPE_RPPVP)
@@ -2063,6 +2063,10 @@ GameObject* Player::GetGameObjectIfCanInteractWith(ObjectGuid const& guid) const
     if (!go)
         return nullptr;
 
+    // Players cannot interact with gameobjects that use the "Point" icon
+    if (go->GetGOInfo()->IconName == "Point")
+        return nullptr;
+
     if (!go->IsWithinDistInMap(this))
         return nullptr;
 
@@ -2157,7 +2161,7 @@ void Player::SetGameMaster(bool on)
         PhasingHandler::SetAlwaysVisible(this, HasAuraType(SPELL_AURA_PHASE_ALWAYS_VISIBLE), false);
 
         m_ExtraFlags &= ~ PLAYER_EXTRA_GM_ON;
-        setFactionForRace(GetRace());
+        SetFactionForRace(GetRace());
         RemovePlayerFlag(PLAYER_FLAGS_GM);
         RemoveUnitFlag2(UNIT_FLAG2_ALLOW_CHEAT_SPELLS);
 
@@ -2311,9 +2315,8 @@ void Player::GiveXP(uint32 xp, Unit* victim, float group_rate)
     packet.ReferAFriendBonusType = recruitAFriend ? 1 : 0;
     SendDirectMessage(packet.Write());
 
-    uint32 curXP = m_activePlayerData->XP;
-    uint32 nextLvlXP = m_activePlayerData->NextLevelXP;
-    uint32 newXP = curXP + xp + bonus_xp;
+    uint32 nextLvlXP = GetXPForNextLevel();
+    uint32 newXP = GetXP() + xp + bonus_xp;
 
     while (newXP >= nextLvlXP && level < sWorld->getIntConfig(CONFIG_MAX_PLAYER_LEVEL))
     {
@@ -2323,7 +2326,7 @@ void Player::GiveXP(uint32 xp, Unit* victim, float group_rate)
             GiveLevel(level + 1);
 
         level = GetLevel();
-        nextLvlXP = m_activePlayerData->NextLevelXP;
+        nextLvlXP = GetXPForNextLevel();
     }
 
     SetXP(newXP);
@@ -4890,7 +4893,7 @@ void Player::UpdateLocalChannels(uint32 newZone)
                 if (channelEntry->Flags & CHANNEL_DBC_FLAG_CITY_ONLY && usedChannel)
                     continue;                            // Already on the channel, as city channel names are not changing
 
-                joinChannel = cMgr->GetJoinChannel(channelEntry->ID, std::string(), current_zone);
+                joinChannel = cMgr->GetSystemChannel(channelEntry->ID, current_zone);
                 if (usedChannel)
                 {
                     if (joinChannel != usedChannel)
@@ -4903,13 +4906,13 @@ void Player::UpdateLocalChannels(uint32 newZone)
                 }
             }
             else
-                joinChannel = cMgr->GetJoinChannel(channelEntry->ID, std::string());
+                joinChannel = cMgr->GetSystemChannel(channelEntry->ID);
         }
         else
             removeChannel = usedChannel;
 
         if (joinChannel)
-            joinChannel->JoinChannel(this, "");          // Changed Channel: ... or Joined Channel: ...
+            joinChannel->JoinChannel(this);          // Changed Channel: ... or Joined Channel: ...
 
         if (removeChannel)
         {
@@ -6306,7 +6309,7 @@ TeamId Player::TeamIdForRace(uint8 race)
     return TEAM_NEUTRAL;
 }
 
-void Player::setFactionForRace(uint8 race)
+void Player::SetFactionForRace(uint8 race)
 {
     m_team = TeamForRace(race);
 
@@ -15180,12 +15183,20 @@ bool Player::CanCompleteRepeatableQuest(Quest const* quest)
 
 bool Player::CanRewardQuest(Quest const* quest, bool msg) const
 {
+    // quest is disabled
+    if (DisableMgr::IsDisabledFor(DISABLE_TYPE_QUEST, quest->GetQuestId(), this))
+        return false;
+
     // not auto complete quest and not completed quest (only cheating case, then ignore without message)
     if (!quest->IsDFQuest() && !quest->IsAutoComplete() && GetQuestStatus(quest->GetQuestId()) != QUEST_STATUS_COMPLETE)
         return false;
 
     // daily quest can't be rewarded (25 daily quest already completed)
-    if (!SatisfyQuestDay(quest, true) || !SatisfyQuestWeek(quest, true) || !SatisfyQuestMonth(quest, true) || !SatisfyQuestSeasonal(quest, true))
+    if (!SatisfyQuestDay(quest, msg) || !SatisfyQuestWeek(quest, msg) || !SatisfyQuestMonth(quest, msg) || !SatisfyQuestSeasonal(quest, msg))
+        return false;
+
+    // player no longer satisfies the quest's requirements (skill level etc.)
+    if (!SatisfyQuestLevel(quest, msg) || !SatisfyQuestSkill(quest, msg) || !SatisfyQuestReputation(quest, msg))
         return false;
 
     // rewarded and not repeatable quest (only cheating case, then ignore without message)
@@ -16547,7 +16558,7 @@ void Player::SendQuestUpdate(uint32 questId)
         }
     }
 
-    UpdateForQuestWorldObjects();
+    UpdateVisibleGameobjectsOrSpellClicks();
     PhasingHandler::OnConditionChange(this);
 }
 
@@ -16915,8 +16926,7 @@ void Player::ItemRemovedQuestCheck(uint32 entry, uint32 count)
             IncompleteQuest(questId);
         }
     }
-
-    UpdateForQuestWorldObjects();
+    UpdateVisibleGameobjectsOrSpellClicks();
 }
 
 void Player::KilledMonster(CreatureTemplate const* cInfo, ObjectGuid guid)
@@ -17096,7 +17106,7 @@ void Player::UpdateQuestObjectiveProgress(QuestObjectiveType objectiveType, int3
     }
 
     if (anyObjectiveChangedCompletionState)
-        UpdateForQuestWorldObjects();
+        UpdateVisibleGameobjectsOrSpellClicks();
 }
 
 bool Player::HasQuestForItem(uint32 itemid) const
@@ -17980,7 +17990,7 @@ bool Player::LoadFromDB(ObjectGuid guid, CharacterDatabaseQueryHolder* holder)
         return false;
     }
 
-    SetLevel(fields.level);
+    SetLevel(fields.level, false);
     SetXP(fields.xp);
 
     Tokenizer exploredZones(fields.exploredZones, ' ');
@@ -18059,7 +18069,7 @@ bool Player::LoadFromDB(ObjectGuid guid, CharacterDatabaseQueryHolder* holder)
 
     //Need to call it to initialize m_team (m_team can be calculated from race)
     //Other way is to saves m_team into characters table.
-    setFactionForRace(GetRace());
+    SetFactionForRace(GetRace());
 
     // load home bind and check in same time class/race pair, it used later for restore broken positions
     if (!_LoadHomeBind(holder->GetPreparedResult(PLAYER_LOGIN_QUERY_LOAD_HOME_BIND)))
@@ -18359,11 +18369,10 @@ bool Player::LoadFromDB(ObjectGuid guid, CharacterDatabaseQueryHolder* holder)
 
     // set value, including drunk invisibility detection
     // calculate sobering. after 15 minutes logged out, the player will be sober again
-    uint8 newDrunkValue = 0;
     if (time_diff < uint32(GetDrunkValue()) * 9)
-        newDrunkValue = GetDrunkValue() - time_diff / 9;
-
-    SetDrunkValue(newDrunkValue);
+        SetDrunkValue(GetDrunkValue() - time_diff / 9);
+    else
+        SetDrunkValue(0);
 
     m_createTime = fields.createTime;
     m_createMode = fields.createMode;
@@ -18603,6 +18612,8 @@ bool Player::LoadFromDB(ObjectGuid guid, CharacterDatabaseQueryHolder* holder)
                 break;
         }
     }
+
+    InitPvP();
 
     // RaF stuff.
     if (GetSession()->IsARecruiter() || (GetSession()->GetRecruiterId() != 0))
@@ -20441,7 +20452,7 @@ void Player::SaveToDB(LoginDatabaseTransaction loginTransaction, CharacterDataba
         stmt->setUInt8(index++, GetClass());
         stmt->setUInt8(index++, GetNativeGender());   // save gender from PLAYER_BYTES_3, UNIT_BYTES_0 changes with every transform effect
         stmt->setUInt8(index++, GetLevel());
-        stmt->setUInt32(index++, m_activePlayerData->XP);
+        stmt->setUInt32(index++, GetXP());
         stmt->setUInt64(index++, GetMoney());
         stmt->setUInt8(index++, GetInventorySlotCount());
         stmt->setUInt8(index++, GetBankBagSlotCount());
@@ -20569,7 +20580,7 @@ void Player::SaveToDB(LoginDatabaseTransaction loginTransaction, CharacterDataba
         stmt->setUInt8(index++, GetClass());
         stmt->setUInt8(index++, GetNativeGender());   // save gender from PLAYER_BYTES_3, UNIT_BYTES_0 changes with every transform effect
         stmt->setUInt8(index++, GetLevel());
-        stmt->setUInt32(index++, m_activePlayerData->XP);
+        stmt->setUInt32(index++, GetXP());
         stmt->setUInt64(index++, GetMoney());
         stmt->setUInt8(index++, GetInventorySlotCount());
         stmt->setUInt8(index++, GetBankBagSlotCount());
@@ -21877,13 +21888,14 @@ void Player::ResetContestedPvP()
 
 void Player::UpdatePvPFlag(time_t currTime)
 {
-    if (!IsPvP())
-        return;
+    if (pvpInfo.EndTimer && pvpInfo.EndTimer <= currTime)
+    {
+        pvpInfo.EndTimer = 0;
+        RemovePlayerFlag(PLAYER_FLAGS_PVP_TIMER);
+    }
 
-    if (!pvpInfo.EndTimer || currTime < (pvpInfo.EndTimer + 300) || pvpInfo.IsHostile)
-        return;
-
-    UpdatePvP(false);
+    if (IsPvP() && !pvpInfo.IsHostile && !HasPlayerFlag(PlayerFlags(PLAYER_FLAGS_IN_PVP | PLAYER_FLAGS_PVP_TIMER)))
+        UpdatePvP(false);
 }
 
 void Player::UpdateDuelFlag(time_t currTime)
@@ -23555,6 +23567,18 @@ void Player::UpdateHomebindTime(uint32 time)
     }
 }
 
+void Player::InitPvP()
+{
+    if (HasPlayerFlag(PLAYER_FLAGS_IN_PVP))
+        UpdatePvP(true, true);
+    else if (HasPlayerFlag(PLAYER_FLAGS_PVP_TIMER))
+    {
+        UpdatePvP(true, true);
+        if (!pvpInfo.IsHostile)
+            pvpInfo.EndTimer = GameTime::GetGameTime() + 300;
+    }
+}
+
 void Player::UpdatePvPState(bool onlyFFA)
 {
     /// @todo should we always synchronize UNIT_FIELD_BYTES_2, 1 of controller and controlled?
@@ -23587,7 +23611,7 @@ void Player::UpdatePvPState(bool onlyFFA)
     else                                                    // in friendly area
     {
         if (IsPvP() && !HasPlayerFlag(PLAYER_FLAGS_IN_PVP) && !pvpInfo.EndTimer)
-            pvpInfo.EndTimer = GameTime::GetGameTime();                  // start toggle-off
+            pvpInfo.EndTimer = GameTime::GetGameTime() + 300;                  // start toggle-off
     }
 }
 
@@ -23607,7 +23631,7 @@ void Player::UpdatePvP(bool state, bool _override)
     }
     else
     {
-        pvpInfo.EndTimer = GameTime::GetGameTime();
+        pvpInfo.EndTimer = GameTime::GetGameTime() + 300;
         SetPvP(state);
     }
 }
@@ -23897,20 +23921,13 @@ void Player::LeaveBattleground(bool teleportToEntryPoint)
 
 bool Player::CanJoinToBattleground(Battleground const* bg) const
 {
-    // check Deserter debuff
-    if (HasAura(26013))
-        return false;
+    uint32 perm = rbac::RBAC_PERM_JOIN_NORMAL_BG;
+    if (bg->isArena())
+        perm = rbac::RBAC_PERM_JOIN_ARENAS;
+    else if (bg->IsRandom())
+        perm = rbac::RBAC_PERM_JOIN_RANDOM_BG;
 
-    if (bg->isArena() && !GetSession()->HasPermission(rbac::RBAC_PERM_JOIN_ARENAS))
-        return false;
-
-    if (bg->IsRandom() && !GetSession()->HasPermission(rbac::RBAC_PERM_JOIN_RANDOM_BG))
-        return false;
-
-    if (!GetSession()->HasPermission(rbac::RBAC_PERM_JOIN_NORMAL_BG))
-        return false;
-
-    return true;
+    return GetSession()->HasPermission(perm);
 }
 
 bool Player::CanReportAfkDueToLimit()
@@ -24273,13 +24290,6 @@ bool Player::ModifyMoney(int64 amount, bool sendError /*= true*/)
         }
     }
 
-    return true;
-}
-
-bool Player::HasEnoughMoney(int64 amount) const
-{
-    if (amount > 0)
-        return (GetMoney() >= (uint64) amount);
     return true;
 }
 
@@ -25258,7 +25268,7 @@ bool Player::HasQuestForGO(int32 GOId) const
     return false;
 }
 
-void Player::UpdateForQuestWorldObjects()
+void Player::UpdateVisibleGameobjectsOrSpellClicks()
 {
     if (m_clientGUIDs.empty())
         return;
@@ -25307,23 +25317,13 @@ void Player::UpdateForQuestWorldObjects()
             auto clickBounds = sObjectMgr->GetSpellClickInfoMapBounds(obj->GetEntry());
             for (auto const& clickPair : clickBounds)
             {
-                //! This code doesn't look right, but it was logically converted to condition system to do the exact
-                //! same thing it did before. It definitely needs to be overlooked for intended functionality.
                 if (ConditionContainer const* conds = sConditionMgr->GetConditionsForSpellClickEvent(obj->GetEntry(), clickPair.second.spellId))
                 {
-                    bool buildUpdateBlock = false;
-                    for (ConditionContainer::const_iterator jtr = conds->begin(); jtr != conds->end() && !buildUpdateBlock; ++jtr)
-                        if ((*jtr)->ConditionType == CONDITION_QUESTREWARDED || (*jtr)->ConditionType == CONDITION_QUESTTAKEN || (*jtr)->ConditionType == CONDITION_QUEST_COMPLETE)
-                            buildUpdateBlock = true;
-
-                    if (buildUpdateBlock)
-                    {
-                        UF::ObjectData::Base objMask;
-                        UF::UnitData::Base unitMask;
-                        unitMask.MarkChanged(&UF::UnitData::NpcFlags, 0); // NpcFlags[0] has UNIT_NPC_FLAG_SPELLCLICK
-                        obj->BuildValuesUpdateForPlayerWithMask(&udata, objMask.GetChangesMask(), unitMask.GetChangesMask(), this);
-                        break;
-                    }
+                    UF::ObjectData::Base objMask;
+                    UF::UnitData::Base unitMask;
+                    unitMask.MarkChanged(&UF::UnitData::NpcFlags, 0); // NpcFlags[0] has UNIT_NPC_FLAG_SPELLCLICK
+                    obj->BuildValuesUpdateForPlayerWithMask(&udata, objMask.GetChangesMask(), unitMask.GetChangesMask(), this);
+                    break;
                 }
             }
         }
