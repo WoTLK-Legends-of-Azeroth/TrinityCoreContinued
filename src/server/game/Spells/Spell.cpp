@@ -3167,9 +3167,9 @@ SpellCastResult Spell::prepare(SpellCastTargets const& targets, AuraEffect const
         if (!(m_spellInfo->IsNextMeleeSwingSpell() || IsAutoRepeat()))
         {
             if (m_targets.GetObjectTarget() && m_caster != m_targets.GetObjectTarget())
-                m_caster->ToCreature()->FocusTarget(this, m_targets.GetObjectTarget());
+                m_caster->ToCreature()->SetSpellFocusTarget(this, m_targets.GetObjectTarget());
             else if (m_spellInfo->HasAttribute(SPELL_ATTR5_DONT_TURN_DURING_CAST))
-                m_caster->ToCreature()->FocusTarget(this, nullptr);
+                m_caster->ToCreature()->SetSpellFocusTarget(this, nullptr);
         }
     }
 
@@ -3407,7 +3407,7 @@ void Spell::_cast(bool skipCheck)
     }
 
     // if the spell allows the creature to turn while casting, then adjust server-side orientation to face the target now
-    // client-side orientation is handled by the client itself, as the cast target is targeted due to Creature::FocusTarget
+    // client-side orientation is handled by the client itself, as the cast target is targeted due to Creature::SetSpellFocusTarget
     if (m_caster->GetTypeId() == TYPEID_UNIT && !m_caster->ToUnit()->HasUnitFlag(UNIT_FLAG_POSSESSED))
         if (!m_spellInfo->HasAttribute(SPELL_ATTR5_DONT_TURN_DURING_CAST))
             if (WorldObject* objTarget = m_targets.GetObjectTarget())
@@ -3482,7 +3482,7 @@ void Spell::_cast(bool skipCheck)
 
     if (!m_spellInfo->IsChanneled())
         if (Creature* creatureCaster = m_caster->ToCreature())
-            creatureCaster->ReleaseFocus(this);
+            creatureCaster->ReleaseSpellFocus(this);
 
     // Okay, everything is prepared. Now we need to distinguish between immediate and evented delayed spells
     if ((m_spellInfo->HasHitDelay() && !m_spellInfo->IsChanneled()) || m_spellInfo->HasAttribute(SPELL_ATTR4_UNK4))
@@ -3940,7 +3940,7 @@ void Spell::finish(bool ok)
     }
 
     if (Creature* creatureCaster = unitCaster->ToCreature())
-        creatureCaster->ReleaseFocus(this);
+        creatureCaster->ReleaseSpellFocus(this);
 
     if (!ok)
         return;
@@ -3953,7 +3953,10 @@ void Spell::finish(bool ok)
         if (spellInfo && spellInfo->IconFileDataId == 134230)
         {
             TC_LOG_DEBUG("spells", "Statue %s is unsummoned in spell %d finish", unitCaster->GetGUID().ToString().c_str(), m_spellInfo->Id);
-            unitCaster->setDeathState(JUST_DIED);
+            // Avoid infinite loops with setDeathState(JUST_DIED) being called over and over
+            // It might make sense to do this check in Unit::setDeathState() and all overloaded functions
+            if (unitCaster->getDeathState() != JUST_DIED)
+                unitCaster->setDeathState(JUST_DIED);
             return;
         }
     }
@@ -4775,8 +4778,8 @@ void Spell::SendChannelStart(uint32 duration)
         if (m_UniqueTargetInfo.size() == 1 && m_UniqueGOTargetInfo.empty())
             if(target.TargetGUID != unitCaster->GetGUID())
                 if (Creature* creatureCaster = unitCaster->ToCreature())
-                    if (!creatureCaster->IsFocusing(this))
-                        creatureCaster->FocusTarget(this, ObjectAccessor::GetWorldObject(*creatureCaster, target.TargetGUID));
+                    if (!creatureCaster->HandleSpellFocus(this))
+                        creatureCaster->SetSpellFocusTarget(this, ObjectAccessor::GetWorldObject(*creatureCaster, target.TargetGUID));
     }
 
     for (GOTargetInfo const& target : m_UniqueGOTargetInfo)

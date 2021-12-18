@@ -113,7 +113,7 @@ void Map::DiscoverGridMapFiles()
             && fread(&build, sizeof(build), 1, tileList) == 1
             && fread(&tilesData[0], MAX_NUMBER_OF_GRIDS * MAX_NUMBER_OF_GRIDS, 1, tileList) == 1)
         {
-            i_gridFileExists = std::bitset<MAX_NUMBER_OF_GRIDS * MAX_NUMBER_OF_GRIDS>(tilesData, Trinity::Containers::Size(tilesData));
+            i_gridFileExists = std::bitset<MAX_NUMBER_OF_GRIDS * MAX_NUMBER_OF_GRIDS>(tilesData, advstd::size(tilesData));
             fclose(tileList);
             return;
         }
@@ -3124,7 +3124,7 @@ bool Map::CheckRespawn(RespawnInfo* info)
                     if (!creature->IsAlive())
                         continue;
                     // escort NPCs are allowed to respawn as long as all other instances are already escorting
-                    if (isEscort && creature->IsEscortNPC(true))
+                    if (isEscort && creature->IsEscorted())
                         continue;
                     doDelete = true;
                     break;

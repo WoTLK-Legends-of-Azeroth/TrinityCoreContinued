@@ -2758,6 +2758,9 @@ bool Player::AddTalent(TalentEntry const* talent, uint8 spec, bool learning)
     else
         (*GetTalentMap(spec))[talent->ID] = learning ? PLAYERSPELL_NEW : PLAYERSPELL_UNCHANGED;
 
+    if (learning)
+        RemoveAurasWithInterruptFlags(SpellAuraInterruptFlags2::ChangeTalent);
+
     return true;
 }
 
@@ -18652,7 +18655,7 @@ bool Player::LoadFromDB(ObjectGuid guid, CharacterDatabaseQueryHolder* holder)
 
     // Unlock battle pet system if it's enabled in bnet account
     if (GetSession()->GetBattlePetMgr()->IsBattlePetSystemEnabled())
-        LearnSpell(SPELL_BATTLE_PET_TRAINING, false);
+        LearnSpell(BattlePets::SPELL_BATTLE_PET_TRAINING, false);
 
     m_achievementMgr->CheckAllAchievementCriteria(this);
     m_questObjectiveCriteriaMgr->CheckAllQuestObjectiveCriteria(this);
@@ -22013,6 +22016,13 @@ void Player::RemovePet(Pet* pet, PetSaveMode mode, bool returnreagent)
     }
 }
 
+void Player::SendTameFailure(PetTameResult result)
+{
+    WorldPackets::Pet::PetTameFailure petTameFailure;
+    petTameFailure.Result = AsUnderlyingType(result);
+    SendDirectMessage(petTameFailure.Write());
+}
+
 void Player::AddPetAura(PetAura const* petSpell)
 {
     m_petAuras.insert(petSpell);
@@ -22025,6 +22035,33 @@ void Player::RemovePetAura(PetAura const* petSpell)
     m_petAuras.erase(petSpell);
     if (Pet* pet = GetPet())
         pet->RemoveAurasDueToSpell(petSpell->GetAura(pet->GetEntry()));
+}
+
+Creature* Player::GetSummonedBattlePet()
+{
+    if (Creature* summonedBattlePet = ObjectAccessor::GetCreatureOrPetOrVehicle(*this, GetCritterGUID()))
+        if (!GetSummonedBattlePetGUID().IsEmpty() && GetSummonedBattlePetGUID() == summonedBattlePet->GetBattlePetCompanionGUID())
+            return summonedBattlePet;
+
+    return nullptr;
+}
+
+void Player::SetBattlePetData(BattlePets::BattlePet const* pet)
+{
+    if (pet)
+    {
+        SetSummonedBattlePetGUID(pet->PacketInfo.Guid);
+        SetCurrentBattlePetBreedQuality(pet->PacketInfo.Quality);
+        SetBattlePetCompanionExperience(pet->PacketInfo.Exp);
+        SetWildBattlePetLevel(pet->PacketInfo.Level);
+    }
+    else
+    {
+        SetSummonedBattlePetGUID(ObjectGuid::Empty);
+        SetCurrentBattlePetBreedQuality(AsUnderlyingType(BattlePets::BattlePetBreedQuality::Poor));
+        SetBattlePetCompanionExperience(0);
+        SetWildBattlePetLevel(0);
+    }
 }
 
 void Player::StopCastingCharm()
@@ -23666,19 +23703,19 @@ void Player::UpdatePotionCooldown(Spell* spell)
 
 void Player::UpdateReviveBattlePetCooldown()
 {
-    SpellInfo const* reviveBattlePetSpellInfo = sSpellMgr->GetSpellInfo(SPELL_REVIVE_BATTLE_PETS, DIFFICULTY_NONE);
+    SpellInfo const* reviveBattlePetSpellInfo = sSpellMgr->GetSpellInfo(BattlePets::SPELL_REVIVE_BATTLE_PETS, DIFFICULTY_NONE);
 
-    if (reviveBattlePetSpellInfo && HasSpell(SPELL_REVIVE_BATTLE_PETS))
+    if (reviveBattlePetSpellInfo && HasSpell(BattlePets::SPELL_REVIVE_BATTLE_PETS))
     {
         SpellHistory::Duration remainingCooldown = GetSpellHistory()->GetRemainingCategoryCooldown(reviveBattlePetSpellInfo);
         if (remainingCooldown > SpellHistory::Duration::zero())
         {
-            if (remainingCooldown < REVIVE_BATTLE_PETS_COOLDOWN)
-                GetSpellHistory()->ModifyCooldown(reviveBattlePetSpellInfo, REVIVE_BATTLE_PETS_COOLDOWN - remainingCooldown);
+            if (remainingCooldown < BattlePets::REVIVE_BATTLE_PETS_COOLDOWN)
+                GetSpellHistory()->ModifyCooldown(reviveBattlePetSpellInfo, BattlePets::REVIVE_BATTLE_PETS_COOLDOWN - remainingCooldown);
         }
         else
         {
-            GetSpellHistory()->StartCooldown(reviveBattlePetSpellInfo, 0, nullptr, false, REVIVE_BATTLE_PETS_COOLDOWN);
+            GetSpellHistory()->StartCooldown(reviveBattlePetSpellInfo, 0, nullptr, false, BattlePets::REVIVE_BATTLE_PETS_COOLDOWN);
         }
     }
 }
@@ -27634,6 +27671,8 @@ void Player::ActivateTalentGroup(ChrSpecializationEntry const* spec)
     ExitVehicle();
     RemoveAllControlled();
 
+    RemoveAurasWithInterruptFlags(SpellAuraInterruptFlags2::ChangeSpec);
+
     // remove single target auras at other targets
     AuraList& scAuras = GetSingleCastAuras();
     for (AuraList::iterator iter = scAuras.begin(); iter != scAuras.end();)
@@ -28473,12 +28512,19 @@ Guild const* Player::GetGuild() const
     return guildId ? sGuildMgr->GetGuildById(guildId) : nullptr;
 }
 
-Pet* Player::SummonPet(uint32 entry, float x, float y, float z, float ang, PetType petType, uint32 duration)
+Pet* Player::SummonPet(uint32 entry, float x, float y, float z, float ang, PetType petType, uint32 duration, bool aliveOnly)
 {
     Pet* pet = new Pet(this, petType);
 
     if (petType == SUMMON_PET && pet->LoadPetFromDB(this, entry))
     {
+        if (aliveOnly && !pet->IsAlive())
+        {
+            pet->DespawnOrUnsummon();
+            SendTameFailure(PetTameResult::Dead);
+            return nullptr;
+        }
+
         if (duration > 0)
             pet->SetDuration(duration);
 
