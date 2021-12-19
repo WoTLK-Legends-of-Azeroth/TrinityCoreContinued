@@ -23,7 +23,7 @@
 #include "Map.h"
 #include "ObjectMgr.h"
 #include "Player.h"
-#include "PoolMgr.h"
+#include "QuestPools.h"
 #include "TemporarySummon.h"
 #include "Transport.h"
 #include "TransportMgr.h"
@@ -49,6 +49,12 @@ enum TimedEvents
     EVENT_QUAKE_SHATTER         = 2,
     EVENT_REBUILD_PLATFORM      = 3,
     EVENT_RESPAWN_GUNSHIP       = 4
+};
+
+enum SpawnGroups
+{
+    SPAWN_GROUP_ALLIANCE_ROS   = 57,
+    SPAWN_GROUP_HORDE_ROS      = 58
 };
 
 BossBoundaryData const boundaries =
@@ -182,6 +188,10 @@ class instance_icecrown_citadel : public InstanceMapScript
             {
                 if (!TeamInInstance)
                     TeamInInstance = player->GetTeam();
+
+                uint8 spawnGroupId = TeamInInstance == ALLIANCE ? SPAWN_GROUP_ALLIANCE_ROS : SPAWN_GROUP_HORDE_ROS;
+                if (!instance->IsSpawnGroupActive(spawnGroupId))
+                    instance->SpawnGroupSpawn(spawnGroupId);
 
                 if (GetBossState(DATA_LADY_DEATHWHISPER) == DONE && GetBossState(DATA_ICECROWN_GUNSHIP_BATTLE) != DONE)
                     SpawnGunship();
@@ -346,7 +356,7 @@ class instance_icecrown_citadel : public InstanceMapScript
                             if (WeeklyQuestData[questIndex].creatureEntry == entry)
                             {
                                 uint8 diffIndex = instance->Is25ManRaid() ? 1 : 0;
-                                if (!sPoolMgr->IsSpawnedObject<Quest>(WeeklyQuestData[questIndex].questId[diffIndex]))
+                                if (!sQuestPoolMgr->IsQuestActive(WeeklyQuestData[questIndex].questId[diffIndex]))
                                     return 0;
                                 break;
                             }
@@ -964,7 +974,7 @@ class instance_icecrown_citadel : public InstanceMapScript
                     case DATA_VALITHRIA_DREAMWALKER:
                         if (state == DONE)
                         {
-                            if (sPoolMgr->IsSpawnedObject<Quest>(WeeklyQuestData[8].questId[instance->Is25ManRaid() ? 1 : 0]))
+                            if (sQuestPoolMgr->IsQuestActive(WeeklyQuestData[8].questId[instance->Is25ManRaid() ? 1 : 0]))
                                 instance->SummonCreature(NPC_VALITHRIA_DREAMWALKER_QUEST, ValithriaSpawnPos);
                             if (GameObject* teleporter = instance->GetGameObject(TeleporterSindragosaGUID))
                                 SetTeleporterState(teleporter, true);
@@ -1051,7 +1061,7 @@ class instance_icecrown_citadel : public InstanceMapScript
                             break;
 
                         // 5 is the index of Blood Quickening
-                        if (!sPoolMgr->IsSpawnedObject<Quest>(WeeklyQuestData[5].questId[instance->Is25ManRaid() ? 1 : 0]))
+                        if (!sQuestPoolMgr->IsQuestActive(WeeklyQuestData[5].questId[instance->Is25ManRaid() ? 1 : 0]))
                             break;
 
                         switch (data)

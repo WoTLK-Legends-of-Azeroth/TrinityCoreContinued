@@ -198,7 +198,7 @@ void CreatureAI::JustAppeared()
         if (TempSummon* summon = me->ToTempSummon())
         {
             // Only apply this to specific types of summons
-            if (!summon->GetVehicle() && ShouldFollowOnSpawn(summon->m_Properties))
+            if (!summon->GetVehicle() && ShouldFollowOnSpawn(summon->m_Properties) && summon->CanFollowOwner())
             {
                 if (Unit* owner = summon->GetCharmerOrOwner())
                 {
@@ -256,7 +256,7 @@ bool CreatureAI::UpdateVictim()
     if (!me->HasReactState(REACT_PASSIVE))
     {
         if (Unit* victim = me->SelectVictim())
-            if (!me->HandleSpellFocus(nullptr, true) && victim != me->GetVictim())
+            if (!me->HasSpellFocus() && victim != me->GetVictim())
                 AttackStart(victim);
 
         return me->GetVictim() != nullptr;
@@ -314,7 +314,7 @@ bool CreatureAI::_EnterEvadeMode(EvadeReason /*why*/)
     me->ResetPlayerDamageReq();
     me->SetLastDamagedTime(0);
     me->SetCannotReachTarget(false);
-    me->DoNotReacquireTarget();
+    me->DoNotReacquireSpellFocusTarget();
     EngagementOver();
 
     return true;
