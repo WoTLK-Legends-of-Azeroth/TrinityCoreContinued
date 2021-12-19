@@ -1366,7 +1366,7 @@ void Unit::DealMeleeDamage(CalcDamageInfo* damageInfo, bool durabilityLoss)
         return;
 
     if (damageInfo->TargetState == VICTIMSTATE_PARRY &&
-        (GetTypeId() != TYPEID_UNIT || (ToCreature()->GetCreatureTemplate()->flags_extra & CREATURE_FLAG_EXTRA_NO_PARRY_HASTEN) == 0))
+        (victim->GetTypeId() != TYPEID_UNIT || (victim->ToCreature()->GetCreatureTemplate()->flags_extra & CREATURE_FLAG_EXTRA_NO_PARRY_HASTEN) == 0))
     {
         // Get attack timers
         float offtime  = float(victim->getAttackTimer(OFF_ATTACK));
@@ -9098,6 +9098,7 @@ void Unit::RestoreDisabledAI()
 void Unit::AddToWorld()
 {
     WorldObject::AddToWorld();
+    i_motionMaster->AddToWorld();
 
     RemoveAurasWithInterruptFlags(SpellAuraInterruptFlags::EnterWorld);
 }
@@ -11160,6 +11161,22 @@ Unit* Unit::GetVehicleBase() const
     return m_vehicle ? m_vehicle->GetBase() : nullptr;
 }
 
+Unit* Unit::GetVehicleRoot() const
+{
+    Unit* vehicleRoot = GetVehicleBase();
+
+    if (!vehicleRoot)
+        return nullptr;
+
+    for (;;)
+    {
+        if (!vehicleRoot->GetVehicleBase())
+            return vehicleRoot;
+
+        vehicleRoot = vehicleRoot->GetVehicleBase();
+    }
+}
+
 Creature* Unit::GetVehicleCreatureBase() const
 {
     if (Unit* veh = GetVehicleBase())
@@ -11909,7 +11926,7 @@ bool Unit::CanSwim() const
         return false;
     if (IsPet() && HasUnitFlag(UNIT_FLAG_PET_IN_COMBAT))
         return true;
-    return HasUnitFlag(UnitFlags(UNIT_FLAG_RENAME | UNIT_FLAG_UNK_15));
+    return HasUnitFlag(UnitFlags(UNIT_FLAG_RENAME | UNIT_FLAG_SWIMMING));
 }
 
 void Unit::NearTeleportTo(Position const& pos, bool casting /*= false*/)
