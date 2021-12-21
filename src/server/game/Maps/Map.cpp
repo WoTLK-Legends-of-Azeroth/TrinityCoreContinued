@@ -411,7 +411,10 @@ template<>
 void Map::AddToGrid(DynamicObject* obj, Cell const& cell)
 {
     NGridType* grid = getNGrid(cell.GridX(), cell.GridY());
-    grid->GetGridType(cell.CellX(), cell.CellY()).AddGridObject(obj);
+    if (obj->IsWorldObject())
+        grid->GetGridType(cell.CellX(), cell.CellY()).AddWorldObject(obj);
+    else
+        grid->GetGridType(cell.CellX(), cell.CellY()).AddGridObject(obj);
 
     obj->SetCurrentCell(cell);
 }
@@ -1583,6 +1586,10 @@ bool Map::MapObjectCellRelocation(T* object, Cell new_cell, char const* objType)
 
         return true;
     }
+
+    if (Creature* c = object->ToCreature())
+        if (c->GetCharmerOrOwnerGUID().IsPlayer())
+            EnsureGridLoaded(new_cell);
 
     // in diff. loaded grid normal object
     if (IsGridLoaded(GridCoord(new_cell.GridX(), new_cell.GridY())))
