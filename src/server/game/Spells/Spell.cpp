@@ -2334,7 +2334,7 @@ int64 Spell::GetUnitTargetCountForEffect(SpellEffIndex effect) const
 {
     return std::count_if(m_UniqueTargetInfo.begin(), m_UniqueTargetInfo.end(), [effect](TargetInfo const& targetInfo)
     {
-        return targetInfo.MissCondition == SPELL_MISS_MISS && targetInfo.EffectMask & (1 << effect);
+        return targetInfo.MissCondition == SPELL_MISS_NONE && targetInfo.EffectMask & (1 << effect);
     });
 }
 
@@ -6009,7 +6009,7 @@ SpellCastResult Spell::CheckCast(bool strict, int32* param1 /*= nullptr*/, int32
                 Creature* creature = m_targets.GetUnitTarget()->ToCreature();
                 if (creature)
                 {
-                    if (!playerCaster->GetSummonedBattlePetGUID() || !creature->GetBattlePetCompanionGUID())
+                    if (playerCaster->GetSummonedBattlePetGUID().IsEmpty() || creature->GetBattlePetCompanionGUID().IsEmpty())
                         return SPELL_FAILED_NO_PET;
 
                     if (playerCaster->GetSummonedBattlePetGUID() != creature->GetBattlePetCompanionGUID())
@@ -7338,10 +7338,20 @@ void Spell::DelayedChannel()
 
 bool Spell::HasPowerTypeCost(Powers power) const
 {
-    return std::find_if(m_powerCost.cbegin(), m_powerCost.cend(), [power](SpellPowerCost const& cost)
+    return GetPowerTypeCostAmount(power).is_initialized();
+}
+
+Optional<int32> Spell::GetPowerTypeCostAmount(Powers power) const
+{
+    auto itr = std::find_if(m_powerCost.cbegin(), m_powerCost.cend(), [power](SpellPowerCost const& cost)
     {
         return cost.Power == power;
-    }) != m_powerCost.cend();
+    });
+
+    if (itr == m_powerCost.cend())
+        return { };
+
+    return itr->Amount;
 }
 
 bool Spell::UpdatePointers()
