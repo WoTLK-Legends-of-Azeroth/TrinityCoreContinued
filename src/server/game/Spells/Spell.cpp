@@ -1137,11 +1137,30 @@ void Spell::SelectImplicitNearbyTargets(SpellEffectInfo const& spellEffectInfo, 
 
 void Spell::SelectImplicitConeTargets(SpellEffectInfo const& spellEffectInfo, SpellImplicitTargetInfo const& targetType, uint32 effMask)
 {
-    if (targetType.GetReferenceType() != TARGET_REFERENCE_TYPE_CASTER)
+    Position coneSrc(*m_caster);
+    float coneAngle = m_spellInfo->ConeAngle;
+    switch (targetType.GetReferenceType())
     {
-        ASSERT(false && "Spell::SelectImplicitConeTargets: received not implemented target reference type");
-        return;
+        case TARGET_REFERENCE_TYPE_CASTER:
+            break;
+        case TARGET_REFERENCE_TYPE_DEST:
+            if (m_caster->GetExactDist2d(m_targets.GetDstPos()) > 0.1f)
+                coneSrc.SetOrientation(m_caster->GetAbsoluteAngle(m_targets.GetDstPos()));
+            break;
+        default:
+            break;
     }
+
+    switch (targetType.GetTarget())
+    {
+        case TARGET_UNIT_CONE_180_DEG_ENEMY:
+            if (coneAngle == 0.0f)
+                coneAngle = 180.0f;
+            break;
+        default:
+            break;
+    }
+
     std::list<WorldObject*> targets;
     SpellTargetObjectTypes objectType = targetType.GetObjectType();
     SpellTargetCheckTypes selectionType = targetType.GetCheckType();
@@ -1150,7 +1169,7 @@ void Spell::SelectImplicitConeTargets(SpellEffectInfo const& spellEffectInfo, Sp
 
     if (uint32 containerTypeMask = GetSearcherTypeMask(objectType, condList))
     {
-        Trinity::WorldObjectSpellConeTargetCheck check(DegToRad(m_spellInfo->ConeAngle), m_spellInfo->Width ? m_spellInfo->Width : m_caster->GetCombatReach(), radius, m_caster, m_spellInfo, selectionType, condList, objectType);
+        Trinity::WorldObjectSpellConeTargetCheck check(coneSrc, DegToRad(coneAngle), m_spellInfo->Width ? m_spellInfo->Width : m_caster->GetCombatReach(), radius, m_caster, m_spellInfo, selectionType, condList, objectType);
         Trinity::WorldObjectListSearcher<Trinity::WorldObjectSpellConeTargetCheck> searcher(m_caster, targets, check, containerTypeMask);
         SearchTargets<Trinity::WorldObjectListSearcher<Trinity::WorldObjectSpellConeTargetCheck> >(searcher, containerTypeMask, m_caster, m_caster, radius);
 
@@ -1188,6 +1207,8 @@ void Spell::SelectImplicitAreaTargets(SpellEffectInfo const& spellEffectInfo, Sp
             break;
         case TARGET_REFERENCE_TYPE_LAST:
         {
+            referer = m_caster;
+
             // find last added target for this effect
             for (auto ihit = m_UniqueTargetInfo.rbegin(); ihit != m_UniqueTargetInfo.rend(); ++ihit)
             {
@@ -1226,57 +1247,60 @@ void Spell::SelectImplicitAreaTargets(SpellEffectInfo const& spellEffectInfo, Sp
              return;
     }
 
+    float radius = spellEffectInfo.CalcRadius(m_caster) * m_spellValue->RadiusMod;
     std::list<WorldObject*> targets;
     switch (targetType.GetTarget())
     {
+        case TARGET_UNIT_CASTER_AND_PASSENGERS:
+            targets.push_back(m_caster);
+            if (Unit* unit = m_caster->ToUnit())
+                if (Vehicle const* vehicleKit = unit->GetVehicleKit())
+                    for (int8 seat = 0; seat < MAX_VEHICLE_SEATS; ++seat)
+                        if (Unit* passenger = vehicleKit->GetPassenger(seat))
+                            targets.push_back(passenger);
+            break;
         case TARGET_UNIT_TARGET_ALLY_OR_RAID:
             if (Unit* targetedUnit = m_targets.GetUnitTarget())
             {
                 if (!m_caster->IsUnit() || !m_caster->ToUnit()->IsInRaidWith(targetedUnit))
-                {
                     targets.push_back(m_targets.GetUnitTarget());
-
-                    CallScriptObjectAreaTargetSelectHandlers(targets, spellEffectInfo.EffectIndex, targetType);
-
-                    if (!targets.empty())
-                    {
-                        // Other special target selection goes here
-                        if (uint32 maxTargets = m_spellValue->MaxAffectedTargets)
-                            Trinity::Containers::RandomResize(targets, maxTargets);
-
-                        for (WorldObject* target : targets)
-                        {
-                            if (Unit* unit = target->ToUnit())
-                                AddUnitTarget(unit, effMask, false, true, center);
-                            else if (GameObject* gObjTarget = target->ToGameObject())
-                                AddGOTarget(gObjTarget, effMask);
-                        }
-                    }
-
-                    return;
-                }
-
-                center = targetedUnit;
+                else
+                    SearchAreaTargets(targets, radius, targetedUnit, referer, targetType.GetObjectType(), targetType.GetCheckType(), spellEffectInfo.ImplicitTargetConditions);
             }
             break;
         case TARGET_UNIT_CASTER_AND_SUMMONS:
             targets.push_back(m_caster);
+            SearchAreaTargets(targets, radius, center, referer, targetType.GetObjectType(), targetType.GetCheckType(), spellEffectInfo.ImplicitTargetConditions);
             break;
         default:
+            SearchAreaTargets(targets, radius, center, referer, targetType.GetObjectType(), targetType.GetCheckType(), spellEffectInfo.ImplicitTargetConditions);
             break;
     }
 
-    float radius = spellEffectInfo.CalcRadius(m_caster) * m_spellValue->RadiusMod;
+    if (targetType.GetObjectType() == TARGET_OBJECT_TYPE_UNIT_AND_DEST)
+    {
+        SpellDestination dest(*referer);
 
-    SearchAreaTargets(targets, radius, center, referer, targetType.GetObjectType(), targetType.GetCheckType(), spellEffectInfo.ImplicitTargetConditions);
+        CallScriptDestinationTargetSelectHandlers(dest, spellEffectInfo.EffectIndex, targetType);
+
+        m_targets.ModDst(dest);
+    }
 
     CallScriptObjectAreaTargetSelectHandlers(targets, spellEffectInfo.EffectIndex, targetType);
+
+    if (targetType.GetTarget() == TARGET_UNIT_SRC_AREA_FURTHEST_ENEMY)
+        targets.sort(Trinity::ObjectDistanceOrderPred(referer, false));
 
     if (!targets.empty())
     {
         // Other special target selection goes here
         if (uint32 maxTargets = m_spellValue->MaxAffectedTargets)
-            Trinity::Containers::RandomResize(targets, maxTargets);
+        {
+            if (targetType.GetTarget() != TARGET_UNIT_SRC_AREA_FURTHEST_ENEMY)
+                Trinity::Containers::RandomResize(targets, maxTargets);
+            else if (targets.size() > maxTargets)
+                targets.resize(maxTargets);
+        }
 
         for (std::list<WorldObject*>::iterator itr = targets.begin(); itr != targets.end(); ++itr)
         {
@@ -1351,6 +1375,7 @@ void Spell::SelectImplicitCasterDestTargets(SpellEffectInfo const& spellEffectIn
             break;
         }
         case TARGET_DEST_CASTER_FRONT_LEAP:
+        case TARGET_DEST_CASTER_MOVEMENT_DIRECTION:
         {
             Unit* unitCaster = m_caster->ToUnit();
             if (!unitCaster)
@@ -1358,6 +1383,41 @@ void Spell::SelectImplicitCasterDestTargets(SpellEffectInfo const& spellEffectIn
 
             float dist = spellEffectInfo.CalcRadius(unitCaster);
             float angle = targetType.CalcDirectionAngle();
+            if (targetType.GetTarget() == TARGET_DEST_CASTER_MOVEMENT_DIRECTION)
+            {
+                angle = [&]()
+                {
+                    switch (m_caster->m_movementInfo.GetMovementFlags() & (MOVEMENTFLAG_FORWARD | MOVEMENTFLAG_BACKWARD | MOVEMENTFLAG_STRAFE_LEFT | MOVEMENTFLAG_STRAFE_RIGHT))
+                    {
+                        case MOVEMENTFLAG_NONE:
+                        case MOVEMENTFLAG_FORWARD:
+                        case MOVEMENTFLAG_FORWARD | MOVEMENTFLAG_BACKWARD:
+                        case MOVEMENTFLAG_STRAFE_LEFT | MOVEMENTFLAG_STRAFE_RIGHT:
+                        case MOVEMENTFLAG_FORWARD | MOVEMENTFLAG_STRAFE_LEFT | MOVEMENTFLAG_STRAFE_RIGHT:
+                        case MOVEMENTFLAG_FORWARD | MOVEMENTFLAG_BACKWARD | MOVEMENTFLAG_STRAFE_LEFT | MOVEMENTFLAG_STRAFE_RIGHT:
+                            return 0.0f;
+                        case MOVEMENTFLAG_BACKWARD:
+                        case MOVEMENTFLAG_BACKWARD | MOVEMENTFLAG_STRAFE_LEFT | MOVEMENTFLAG_STRAFE_RIGHT:
+                            return static_cast<float>(M_PI);
+                        case MOVEMENTFLAG_STRAFE_LEFT:
+                        case MOVEMENTFLAG_FORWARD | MOVEMENTFLAG_BACKWARD | MOVEMENTFLAG_STRAFE_LEFT:
+                            return static_cast<float>(M_PI / 2);
+                        case MOVEMENTFLAG_FORWARD | MOVEMENTFLAG_STRAFE_LEFT:
+                            return static_cast<float>(M_PI / 4);
+                        case MOVEMENTFLAG_BACKWARD | MOVEMENTFLAG_STRAFE_LEFT:
+                            return static_cast<float>(3 * M_PI / 4);
+                        case MOVEMENTFLAG_STRAFE_RIGHT:
+                        case MOVEMENTFLAG_FORWARD | MOVEMENTFLAG_BACKWARD |  MOVEMENTFLAG_STRAFE_RIGHT:
+                            return static_cast<float>(-M_PI / 2);
+                        case MOVEMENTFLAG_FORWARD | MOVEMENTFLAG_STRAFE_RIGHT:
+                            return static_cast<float>(-M_PI / 4);
+                        case MOVEMENTFLAG_BACKWARD | MOVEMENTFLAG_STRAFE_RIGHT:
+                            return static_cast<float>(-3 * M_PI / 4);
+                        default:
+                            return 0.0f;
+                    }
+                }();
+            }
 
             Position pos = dest._position;
 
@@ -1380,7 +1440,8 @@ void Spell::SelectImplicitCasterDestTargets(SpellEffectInfo const& spellEffectIn
             break;
         }
         case TARGET_DEST_CASTER_GROUND:
-            m_caster->UpdateAllowedPositionZ(dest._position.GetPositionX(), dest._position.GetPositionY(), dest._position.m_positionZ);
+        case TARGET_DEST_CASTER_GROUND_2:
+            dest._position.m_positionZ = m_caster->GetMapWaterOrGroundLevel(dest._position.GetPositionX(), dest._position.GetPositionY(), dest._position.GetPositionZ());
             break;
         case TARGET_DEST_SUMMONER:
             if (Unit const* unitCaster = m_caster->ToUnit())
@@ -1541,6 +1602,10 @@ void Spell::SelectImplicitCasterObjectTargets(SpellEffectInfo const& spellEffect
             if (Creature* vehicleBase = m_caster->ToCreature())
                 if (vehicleBase->IsVehicle())
                     target = vehicleBase->GetVehicleKit()->GetPassenger(targetType.GetTarget() - TARGET_UNIT_PASSENGER_0);
+            break;
+        case TARGET_UNIT_TARGET_TAP_LIST:
+            if (Creature* creatureCaster = m_caster->ToCreature())
+                target = creatureCaster->GetLootRecipient();
             break;
         case TARGET_UNIT_OWN_CRITTER:
             if (Unit const* unitCaster = m_caster->ToUnit())
@@ -8463,20 +8528,20 @@ bool WorldObjectSpellAreaTargetCheck::operator()(WorldObject* target) const
     return WorldObjectSpellTargetCheck::operator ()(target);
 }
 
-WorldObjectSpellConeTargetCheck::WorldObjectSpellConeTargetCheck(float coneAngle, float lineWidth, float range, WorldObject* caster,
+WorldObjectSpellConeTargetCheck::WorldObjectSpellConeTargetCheck(Position const& coneSrc, float coneAngle, float lineWidth, float range, WorldObject* caster,
     SpellInfo const* spellInfo, SpellTargetCheckTypes selectionType, ConditionContainer const* condList, SpellTargetObjectTypes objectType)
-    : WorldObjectSpellAreaTargetCheck(range, caster, caster, caster, spellInfo, selectionType, condList, objectType), _coneAngle(coneAngle), _lineWidth(lineWidth) { }
+    : WorldObjectSpellAreaTargetCheck(range, caster, caster, caster, spellInfo, selectionType, condList, objectType), _coneSrc(coneSrc), _coneAngle(coneAngle), _lineWidth(lineWidth) { }
 
 bool WorldObjectSpellConeTargetCheck::operator()(WorldObject* target) const
 {
     if (_spellInfo->HasAttribute(SPELL_ATTR0_CU_CONE_BACK))
     {
-        if (!_caster->isInBack(target, _coneAngle))
+        if (_coneSrc.HasInArc(-std::abs(_coneAngle), target))
             return false;
     }
     else if (_spellInfo->HasAttribute(SPELL_ATTR0_CU_CONE_LINE))
     {
-        if (!_caster->HasInLine(target, target->GetCombatReach(), _lineWidth))
+        if (!_coneSrc.HasInLine(target, target->GetCombatReach(), _lineWidth))
             return false;
     }
     else
@@ -8484,7 +8549,7 @@ bool WorldObjectSpellConeTargetCheck::operator()(WorldObject* target) const
         if (!_caster->IsUnit() || !_caster->ToUnit()->IsWithinBoundaryRadius(target->ToUnit()))
             // ConeAngle > 0 -> select targets in front
             // ConeAngle < 0 -> select targets in back
-            if (_caster->HasInArc(_coneAngle, target) != G3D::fuzzyGe(_coneAngle, 0.f))
+            if (_coneSrc.HasInArc(_coneAngle, target) != G3D::fuzzyGe(_coneAngle, 0.f))
                 return false;
     }
     return WorldObjectSpellAreaTargetCheck::operator ()(target);
